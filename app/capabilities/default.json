@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Only what the Glidedesk UI needs: events and its own commands. No file system, shell or HTTP access from the web view.",
+  "windows": ["main", "identify"],
+  "permissions": ["core:event:default", "core:window:allow-close", "core:window:allow-start-dragging"]
+}

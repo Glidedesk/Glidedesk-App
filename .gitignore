@@ -1,0 +1,45 @@
+# --- Build output --------------------------------------------------------
+/target/
+/output-build/
+/app/ui/dist/
+/app/gen/
+/app/ui/node_modules/
+**/node_modules/
+/.pnpm-store/
+*.tsbuildinfo
+.vite/
+
+# --- Secrets: never commit signing material or keys ---------------------
+/.signing/
+*.p12
+*.pfx
+*.pem
+!/signing/*.pem
+*.key
+!/signing/*.pub
+.env
+.env.*
+github-secrets.env
+
+# --- Apple SDK (licensed, copied locally by `make sdk`) -----------------
+/docker/sdk/
+*.sdk/
+*.xip
+
+# --- Local tooling and caches ------------------------------------------
+/graphify-out/
+/.claude/
+/.idea/
+/.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+*.profraw
+*.profdata
+/coverage/
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/

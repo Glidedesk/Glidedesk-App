@@ -1,0 +1,24 @@
+#!/bin/sh
+# Signs a Windows executable in place with Glidedesk's self-signed Authenticode
+# certificate (PLAN §13.1). Uses a free RFC 3161 timestamp server so the
+# signature stays valid after the certificate expires.
+# Env: GLIDEDESK_WIN_PFX (path), GLIDEDESK_WIN_PFX_PASSWORD
+set -eu
+f="$1"
+: "${GLIDEDESK_WIN_PFX:?GLIDEDESK_WIN_PFX not set}"
+: "${GLIDEDESK_WIN_PFX_PASSWORD:?GLIDEDESK_WIN_PFX_PASSWORD not set}"
+pw="$(mktemp)"; tmp="$f.signing"
+trap 'rm -f "$pw" "$tmp"' EXIT
+chmod 600 "$pw"
+printf '%s' "$GLIDEDESK_WIN_PFX_PASSWORD" > "$pw"
+sign() {
+  osslsigncode sign -pkcs12 "$GLIDEDESK_WIN_PFX" -readpass "$pw" -n "Glidedesk" \
+    -i "https://github.com" -h sha256 "$@" -in "$f" -out "$tmp" >/dev/null
+}
+for ts in http://timestamp.digicert.com http://timestamp.sectigo.com http://timestamp.acs.microsoft.com; do
+  if sign -ts "$ts"; then mv "$tmp" "$f"; echo "signed $f"; exit 0; fi
+done
+echo "gd-sign-windows: no timestamp server reachable; signing without a timestamp" >&2
+sign
+mv "$tmp" "$f"
+echo "signed $f (no timestamp)"

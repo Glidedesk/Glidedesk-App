@@ -1,0 +1,69 @@
+# Real-device test checklist (PLAN §10.2)
+
+Automated tests run in Docker (`make test`). These checks need real computers.
+Use the installers in `output-build/`.
+
+## Before you start
+- One **server** (the computer whose keyboard/mouse you use) and at least one **client**.
+- Same local network. Windows: allow Glidedesk on *Private* networks when asked.
+- macOS: grant **Accessibility** (both roles) and **Input Monitoring** (server) in
+  System Settings → Privacy & Security. The first-run window links there.
+
+## 1. Install
+- [ ] macOS: open the `.dmg`, drag Glidedesk to Applications, open it
+      (macOS 15+: System Settings → Privacy & Security → Open Anyway).
+- [ ] Windows: run `Glidedesk_<ver>_windows-x64-setup.exe` (SmartScreen: More info → Run anyway).
+- [ ] Windows Server / no internet: use `…_windows-x64-offline-setup.exe`.
+- [ ] First window shows the setup: choose Server or Client.
+
+## 2. Keyboard & mouse
+- [ ] Client appears on the server within a few seconds and is placed on a free side.
+- [ ] Moving the cursor across that edge moves it onto the client; typing works.
+- [ ] Mac server → Windows client: Cmd+C / Cmd+V act as Ctrl+C / Ctrl+V.
+- [ ] Hold Shift while crossing: nothing stays stuck on either side.
+- [ ] Move back: the cursor returns where it left.
+- [ ] Layout page: drag the client to another side; the new edge works immediately.
+- [ ] Two monitors on the server: set "One monitor" for the link; only that edge leads to the client.
+- [ ] Ctrl+Alt+L locks the cursor; again unlocks.
+
+## 3. Health
+- [ ] Unplug the client's network cable (or turn Wi-Fi off): the server shows it **Offline** within ~3 s,
+      the cursor cannot enter it, and no key is stuck.
+- [ ] Reconnect: it comes back **Online** by itself.
+
+## 4. Clipboard & files
+- [ ] Copy text on the server, move to the client, paste.
+- [ ] Copy on the client, move back, paste on the server.
+- [ ] Copy a screenshot/image both ways.
+- [ ] Copy a folder with a large file (e.g. 5 GB) in Explorer/Finder, move across, wait for the
+      Transfers bar to finish, paste in the other file manager.
+- [ ] Windows: **Cut** a file, move to the other computer, paste → original goes to the Recycle Bin.
+- [ ] Turn off "Share clipboard" in the tray: nothing is sent.
+
+## 5. Tray
+- [ ] Stop sharing → clients show the server offline; Start → they reconnect.
+- [ ] Restart Glidedesk → back within a few seconds.
+- [ ] Quit → both the tray icon and `glidedesk-agent` exit.
+
+## 6. Upgrade & uninstall (Windows)
+- [ ] Install version A, then run the installer of version B: it says "Update", keeps settings,
+      and Glidedesk restarts by itself.
+- [ ] Run the same version again: "Repair".
+- [ ] Silent: `setup.exe /S` upgrades without questions; exit code 0.
+- [ ] Uninstall → "Keep my settings" → reinstall → layout is still there.
+- [ ] Uninstall → "Remove my settings" → `%APPDATA%\Glidedesk` is gone.
+
+## 7. Linux
+- [ ] `sudo apt install ./Glidedesk_<ver>_linux-<arch>.deb` (or `dnf install` the .rpm); open Glidedesk from the menu.
+- [ ] Client role on **Wayland** (GNOME/KDE): the server can move the pointer, click and type here.
+- [ ] Server role on an **X11** session: moving off the edge reaches the other computer; on Wayland
+      the app explains that the server role needs X11.
+- [ ] Log out and in: Glidedesk starts by itself (tray icon).
+- [ ] Clipboard text/image both ways; copy a folder in Files/Dolphin and paste on the other computer.
+
+## 8. Uninstall (macOS)
+- [ ] Run "Uninstall Glidedesk" from the DMG → Keep / Remove settings both work.
+
+## Self-test
+`Advanced → Run self-test` (or `glidedesk-agent --selftest`) prints permissions, monitors,
+interfaces, capture/inject checks and encrypted loopback latency. Attach it to bug reports.

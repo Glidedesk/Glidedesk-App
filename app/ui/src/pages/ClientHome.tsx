@@ -1,0 +1,97 @@
+import { api } from "../lib/api";
+import { useToast } from "../lib/toast";
+import { Icon } from "../components/icons";
+import { linkLabel } from "../lib/format";
+import type { AgentStatus, Config, RemapPreset } from "../lib/types";
+import { Badge, Button, Dot, NumberInput, Page, Row, Section, Select, Switch, TextInput } from "../components/ui";
+
+type Update = (m: (c: Config) => void, now?: boolean) => void;
+
+export function ClientHome({ status, config, update }: { status: AgentStatus; config: Config; update: Update }) {
+  const c = status.client;
+  const { run } = useToast();
+  const tone = c?.state === "connected" ? "ok" : c?.state === "rejected" ? "bad" : c?.state === "searching" || c?.state === "connecting" ? "busy" : "muted";
+  const cl = config.client;
+  const override = <K extends "mouse_speed" | "scroll_speed">(k: K, label: string) => (
+    <Row label={label} hint={cl[k] == null ? "Set by the server" : "Overridden on this computer"}>
+      <Switch label={`Override ${label}`} checked={cl[k] != null} onChange={(on) => update((x) => void (x.client[k] = on ? 1 : null), true)} />
+      {cl[k] != null && <NumberInput label={label} value={cl[k] ?? 1} min={0.1} max={10} step={0.1} unit="×" onChange={(v) => update((x) => void (x.client[k] = v))} />}
+    </Row>
+  );
+  return (
+    <Page
+      title="This computer"
+      subtitle="Controlled by a Glidedesk server on your network."
+      actions={
+        <>
+          <Button icon={<Icon.Refresh size={16} />} onClick={() => void run(() => api.reconnectAll())}>
+            Reconnect
+          </Button>
+          <Button
+            icon={status.running ? <Icon.Stop size={15} /> : <Icon.Play size={15} />}
+            onClick={() => void run(() => (status.running ? api.stop() : api.start()))}
+            variant={status.running ? "default" : "primary"}
+          >
+            {status.running ? "Stop" : "Start"}
+          </Button>
+        </>
+      }
+    >
+      <div className="mb-6 rounded-2xl border border-line bg-panel p-5">
+        <div className="flex items-center gap-3">
+          <Badge tone={tone}>
+            <Dot tone={tone} /> {c ? linkLabel(c.state) : "Stopped"}
+          </Badge>
+          {c?.active && <Badge tone="accent">Cursor is here</Badge>}
+        </div>
+        <div className="mt-3 text-[18px] font-semibold">{c?.server_name ?? "No server yet"}</div>
+        <div className="mt-1 text-muted">
+          {c?.server_address ?? "—"}
+          {c?.latency_ms != null ? ` · ${c.latency_ms.toFixed(1)} ms` : ""}
+          {c?.server_version ? ` · v${c.server_version}` : ""}
+        </div>
+        {c?.message && <div className="mt-2 text-muted">{c.message}</div>}
+      </div>
+      <Section title="Server">
+        <Row label="Server address" hint="Leave empty to find the server automatically. Otherwise a name or IP, optionally with :port.">
+          <TextInput label="Server address" value={cl.server_address} placeholder="Automatic" onChange={(v) => update((x) => void (x.client.server_address = v.trim()))} />
+        </Row>
+      </Section>
+      <Section title="Overrides" description="Settings here win over the server's settings for this computer.">
+        {override("mouse_speed", "Mouse speed")}
+        {override("scroll_speed", "Scroll speed")}
+        <Row label="Reverse scrolling" hint={cl.scroll_invert == null ? "Set by the server" : "Overridden on this computer"}>
+          <Select
+            label="Reverse scrolling"
+            value={cl.scroll_invert == null ? "server" : cl.scroll_invert ? "yes" : "no"}
+            onChange={(v) => update((x) => void (x.client.scroll_invert = v === "server" ? null : v === "yes"), true)}
+            options={[
+              ["server", "Use server setting"],
+              ["yes", "Reverse"],
+              ["no", "Normal"],
+            ]}
+          />
+        </Row>
+        <Row label="Cmd / Ctrl">
+          <Select<"server" | RemapPreset>
+            label="Modifier mapping"
+            value={cl.key_remap ?? "server"}
+            onChange={(v) => update((x) => void (x.client.key_remap = v === "server" ? null : v), true)}
+            options={[
+              ["server", "Use server setting"],
+              ["auto", "Automatic"],
+              ["none", "Keep as is"],
+              ["swap-ctrl-meta", "Always swap"],
+            ]}
+          />
+        </Row>
+        <Row label="Show a cursor without a mouse" hint="Windows hides the pointer when no mouse is plugged in (servers, VMs).">
+          <Switch label="Draw cursor" checked={cl.draw_cursor} onChange={(v) => update((x) => void (x.client.draw_cursor = v), true)} />
+        </Row>
+        <Row label="Sync Caps / Num Lock lights">
+          <Switch label="LED sync" checked={cl.led_sync} onChange={(v) => update((x) => void (x.client.led_sync = v), true)} />
+        </Row>
+      </Section>
+    </Page>
+  );
+}

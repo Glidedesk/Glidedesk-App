@@ -1,0 +1,24 @@
+[package]
+name = "glidedesk-platform"
+description = "OS helpers: host name, log folder, session state, Wake-on-LAN"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+glidedesk-proto.workspace = true
+directories.workspace = true
+gethostname = "1.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-foundation = { version = "0.3.2", features = ["CFString", "CFNumber", "CFDictionary", "CFBase"] }
+objc2-core-graphics = { version = "0.3.2", features = ["CGSession"] }
+objc2-foundation = { version = "0.3.2", features = ["NSFileManager", "NSURL", "NSString", "NSError"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_RemoteDesktop", "Win32_System_StationsAndDesktops", "Win32_UI_Shell"] }
+
+[lints]
+workspace = true

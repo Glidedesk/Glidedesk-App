@@ -1,0 +1,4 @@
+# Glidedesk: let the signed-in user create a virtual keyboard/mouse
+# (needed to control this computer, also on Wayland). "uaccess" grants
+# access only to the user at the local seat, not to remote or other users.
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"
