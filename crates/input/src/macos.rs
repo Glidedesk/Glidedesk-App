@@ -671,18 +671,25 @@ pub fn start_capture() -> Result<Capture, InputError> {
                     user,
                 )
             };
-            match session.as_ref().and_then(|t| CFMachPort::new_run_loop_source(None, Some(t), 0)) {
-                Some(src) => {
+            // Only a tap that is serviced by this run loop may stay: an unserviced
+            // active tap would hold up input.
+            let session = session.and_then(|t| {
+                if let Some(src) = CFMachPort::new_run_loop_source(None, Some(&t), 0) {
                     // SAFETY: as above.
                     rl.add_source(Some(&src), unsafe { kCFRunLoopCommonModes });
+                    Some(t)
+                } else {
+                    t.invalidate();
+                    None
                 }
-                None => warn!(
-                    "session event tap unavailable: buttons that mouse software turns into shortcuts stay on this Mac"
-                ),
-            }
+            });
             if let Some(t) = &session {
                 CGEvent::tap_enable(t, true);
                 let _ = thread_shared.session_tap.set(SendPort(t.clone()));
+            } else {
+                warn!(
+                    "session event tap unavailable: buttons that mouse software turns into shortcuts stay on this Mac"
+                );
             }
             let _ = thread_shared.run_loop.set(SendRunLoop(rl));
             let _ = thread_shared.tap.set(SendPort(tap.clone()));
