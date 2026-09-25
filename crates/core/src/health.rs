@@ -68,9 +68,13 @@ impl Health {
         self.state = HealthState::Connecting;
     }
 
+    /// A new link: nothing measured on an older one (latency, "screen
+    /// locked") applies any more — a restarted client reports afresh.
     pub fn connected(&mut self, now: Instant) {
         self.connected_at = Some(now);
         self.last_pong = Some(now);
+        self.rtt = None;
+        self.status = ClientStatus::default();
         self.state = HealthState::Online;
     }
 
@@ -171,6 +175,21 @@ mod tests {
             ClientStatus { screen_locked: true, ..Default::default() },
         );
         assert_eq!(h.state(), HealthState::Locked);
+    }
+
+    #[test]
+    fn a_new_link_forgets_what_the_old_one_measured() {
+        let t0 = Instant::now();
+        let mut h = Health::new(cfg());
+        h.connected(t0);
+        h.pong(t0 + Duration::from_millis(200), t0, ClientStatus { screen_locked: true, ..Default::default() });
+        assert_eq!(h.state(), HealthState::Locked);
+        h.disconnected();
+        // The client restarted: its old latency and "screen locked" are history.
+        h.connected(t0 + Duration::from_secs(5));
+        assert_eq!(h.state(), HealthState::Online);
+        assert_eq!(h.rtt(), None);
+        assert_eq!(h.status(), ClientStatus::default());
     }
 
     #[test]

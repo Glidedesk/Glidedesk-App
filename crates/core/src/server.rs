@@ -1069,6 +1069,8 @@ impl Hub {
         conn.connection.close(0u32.into(), reason.as_bytes());
         slot.health.disconnected();
         let name = slot.name.clone();
+        self.sync.link_closed(Some(id));
+        self.last_sent.remove(&id);
         info!(client = %id, reason, "client disconnected");
         let out = self.engine.set_available(id, false);
         self.apply(out, 0, 0);

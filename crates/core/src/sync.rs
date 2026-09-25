@@ -106,6 +106,9 @@ pub struct Sync {
     next_set: AtomicU64,
     offers: Mutex<Vec<Offered>>,
     pending: Mutex<Option<Pending>>,
+    /// Clipboard sequence of the placeholder of an offer whose link ended: that
+    /// text only describes files nobody can fetch any more, so it is never sent.
+    withdrawn: Mutex<Option<u64>>,
     /// `true` while an offer waits here (the capture holds the paste shortcut).
     hold: watch::Sender<bool>,
     seen: Mutex<Option<Seen>>,
@@ -151,6 +154,7 @@ impl Sync {
             next_set: AtomicU64::new(seed),
             offers: Mutex::new(Vec::new()),
             pending: Mutex::new(None),
+            withdrawn: Mutex::new(None),
             hold: watch::channel(false).0,
             seen: Mutex::new(seen),
             activity: Mutex::new(VecDeque::new()),
@@ -233,7 +237,7 @@ impl Sync {
     #[must_use]
     pub fn changed_for(&self, target: Option<DeviceId>, last_sent: Option<u64>) -> Option<u64> {
         let seq = lock(self.clip.as_ref()?).sequence();
-        if Some(seq) == last_sent {
+        if Some(seq) == last_sent || *lock(&self.withdrawn) == Some(seq) {
             return None;
         }
         // Do not echo back what that machine just gave us.
@@ -581,6 +585,36 @@ impl Sync {
         Ok(seq)
     }
 
+    /// The link to `peer` ended (`None` = the server). Whatever that link left
+    /// behind must not outlive it, or it stays wrong until this app restarts:
+    /// - an offer from `peer` can only be fetched over the dead link, so a
+    ///   paste here would fail (and the paste shortcut stays held);
+    /// - "don't echo back what `peer` gave us" no longer holds: a restarted
+    ///   peer lost its clipboard (on X11 it lived in the app), so our copy of
+    ///   it must be sent again next time.
+    pub fn link_closed(&self, peer: Option<DeviceId>) {
+        let dropped = {
+            let mut pending = lock(&self.pending);
+            if pending.as_ref().is_some_and(|p| p.origin == peer) { pending.take() } else { None }
+        };
+        if let Some(p) = dropped {
+            *lock(&self.withdrawn) = Some(p.placeholder);
+            self.hold.send_replace(false);
+            self.note(
+                ActivityTone::Info,
+                format!(
+                    "{}: no longer offered — {} disconnected; copy it there again",
+                    describe_names(&p.offer.names, p.offer.items),
+                    p.peer
+                ),
+            );
+        }
+        let mut written = lock(&self.written);
+        if written.is_some_and(|(_, origin)| origin == peer) {
+            *written = None;
+        }
+    }
+
     /// A newer clipboard arrived: forget an older file offer.
     fn drop_pending(&self) {
         if lock(&self.pending).take().is_some() {
@@ -784,6 +818,23 @@ mod tests {
         assert!(sync.stale(shared.sequence()).is_none(), "changed since: just copied");
         sync.observe();
         assert!(sync.stale(shared.sequence()).is_none(), "seen fresh");
+    }
+
+    #[tokio::test]
+    async fn a_closed_link_ends_the_echo_guard_for_that_peer_only() {
+        let clip = glidedesk_clipboard::mock::MockClipboard::default();
+        let sync = Sync::new(Some(Box::new(clip.clone())));
+        let (a, b) = (DeviceId([1; 16]), DeviceId([2; 16]));
+        let shared = sync.clip.clone().unwrap();
+        let seq = sync.write_local(&shared, ClipData { text: Some("from a".into()), ..ClipData::default() }, Some(a));
+        let seq = seq.await.unwrap();
+        assert_eq!(sync.changed_for(Some(a), None), None, "not echoed back to a");
+        assert_eq!(sync.changed_for(Some(b), None), Some(seq));
+        sync.link_closed(Some(b));
+        assert_eq!(sync.changed_for(Some(a), None), None, "another peer leaving changes nothing");
+        // `a` restarted and lost its clipboard: it gets the text again.
+        sync.link_closed(Some(a));
+        assert_eq!(sync.changed_for(Some(a), None), Some(seq));
     }
 
     #[test]

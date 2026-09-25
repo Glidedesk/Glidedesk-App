@@ -323,6 +323,9 @@ async fn run(
     loop {
         let end = r.session(&mut cmds).await;
         let _ = r.inject.send(InjectCmd::Input(Input::ReleaseAll));
+        // The link is gone: an offer from the server can't be fetched any more,
+        // and a restarted server must get our clipboard again.
+        r.sync.link_closed(None);
         match end {
             SessionEnd::Command(ClientCommand::Shutdown(_)) => break,
             SessionEnd::Command(ClientCommand::ApplyConfig(c)) => {

@@ -154,3 +154,18 @@ them from staging; macOS Finder has no "cut" so cut only applies to Windows sour
       of all pages at 375/768/1280 px, light and dark; Lighthouse accessibility 100.
 Known gaps (v4): still no real Windows device test from this Mac; the lab covers Linux agents only
 (macOS server tested on this Mac by the user).
+
+### v4 fix — a restarted client works without restarting the server
+- [x] Found (real client log + lab): per-peer state outlived the link it came on. (1) The "don't echo
+      back" guard kept the server from sending a client the clipboard it got from it, though the
+      restarted client had lost it (X11 clipboards die with the app) — until the server's clipboard
+      changed or the server restarted; same on the client after a server restart. (2) A file offer
+      from the old link stayed pending: the server held its paste shortcut and the first paste
+      failed on the dead link. (3) Old latency / "screen locked" showed until the first pong.
+- [x] Fix: `Sync::link_closed` on every link end (server `drop_client`, client session end) drops
+      that peer's offer (its placeholder text is never passed on) and its echo guard;
+      `Health::connected` starts fresh. Tests: 2 e2e (client restart, server restart) that failed
+      before the fix, 2 unit; 137 Rust + 6 UI tests, clippy, Windows cross-check green.
+- [x] Lab: client-a restarted with SIGTERM and SIGKILL, server untouched — cursor, pointer
+      motion and clipboard work every time; browser QA: offer banner and "Get them now" disappear,
+      Activity says why, client back Online. macOS cross-check not run (no SDK on this Linux host).

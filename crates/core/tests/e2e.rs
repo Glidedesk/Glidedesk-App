@@ -536,3 +536,177 @@ async fn forget_sticks_until_reconnect_and_old_files_are_not_offered() {
     cli.commands.send(glidedesk_core::ClientCommand::Shutdown(GoodbyeReason::Quitting)).await.unwrap();
     srv.commands.send(ServerCommand::Shutdown(GoodbyeReason::Stopping)).await.unwrap();
 }
+
+fn clip_client(addr: &str, clip: &glidedesk_clipboard::mock::MockClipboard) -> glidedesk_core::ClientHandle {
+    let mut ccfg = Config::default();
+    ccfg.device.id = CLIENT_ID;
+    ccfg.device.role = Role::Client;
+    addr.clone_into(&mut ccfg.client.server_address);
+    client::start(
+        ccfg,
+        ClientDeps {
+            injector: Box::new(MockInjector::default()),
+            monitors: source(monitor(800, 600)),
+            status: Arc::new(glidedesk_proto::ClientStatus::default),
+            app_version: "test".into(),
+            host_name: "c".into(),
+            preferred_server: None,
+            clipboard: Some(Box::new(clip.clone())),
+        },
+    )
+}
+
+fn clip_server(
+    cfg: Config,
+    clip: &glidedesk_clipboard::mock::MockClipboard,
+) -> (server::ServerHandle, tokio::sync::mpsc::Sender<CaptureEvent>, Arc<mock::MockControl>) {
+    let (capture, cap_tx, cap_ctl) = mock::capture();
+    let srv = server::start(
+        cfg,
+        ServerDeps {
+            capture,
+            monitors: source(monitor(1000, 500)),
+            known_monitors: HashMap::new(),
+            forgotten: std::collections::HashSet::new(),
+            app_version: "test".into(),
+            host_name: "s".into(),
+            clipboard: Some(Box::new(clip.clone())),
+        },
+    )
+    .unwrap();
+    (srv, cap_tx, cap_ctl)
+}
+
+async fn wait_clip(
+    clip: &glidedesk_clipboard::mock::MockClipboard,
+    what: &str,
+    pred: impl Fn(&glidedesk_clipboard::ClipData) -> bool,
+) {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !pred(&clip.contents()) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for {what}: {:?}", clip.contents()));
+}
+
+/// A client that restarts (new process, its clipboard lost, its offers gone)
+/// must work fully again without restarting the server: the server sends it
+/// the clipboard it got from it before, and an offer from the old link no
+/// longer holds the server's paste shortcut.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restarted_client_works_without_restarting_the_server() {
+    use glidedesk_clipboard::ClipData;
+    use glidedesk_clipboard::mock::MockClipboard;
+
+    let server_clip = MockClipboard::default();
+    let (srv, cap_tx, cap_ctl) = clip_server(server_config(), &server_clip);
+    let mut st = srv.status.clone();
+    let addr = wait_for(&mut st, "running", |v| v.running).await.bind[0].addr.clone();
+    let enter = || CaptureEvent::Motion { pos: Point::new(999, 100), dx: 5, dy: 0 };
+    let back = || CaptureEvent::Motion { pos: Point::new(999, 100), dx: -10, dy: 0 };
+
+    // The client copies text; it reaches the server when the cursor comes back.
+    let clip1 = MockClipboard::default();
+    let cli = clip_client(&addr, &clip1);
+    wait_for(&mut st, "online", |v| v.clients.iter().any(|c| c.state == HealthState::Online)).await;
+    cap_tx.send(enter()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    clip1.set_external(ClipData { text: Some("copied on the client".into()), ..Default::default() });
+    cap_tx.send(back()).await.unwrap();
+    wait_clip(&server_clip, "client text on server", |c| c.text.as_deref() == Some("copied on the client")).await;
+
+    // The client restarts: a new process with an empty clipboard.
+    cli.commands.send(glidedesk_core::ClientCommand::Shutdown(GoodbyeReason::Restarting)).await.unwrap();
+    wait_for(&mut st, "offline", |v| v.clients.iter().all(|c| c.state == HealthState::Offline)).await;
+    let clip2 = MockClipboard::default();
+    let cli = clip_client(&addr, &clip2);
+    let v = wait_for(&mut st, "online again", |v| v.clients.iter().any(|c| c.state == HealthState::Online)).await;
+    assert_eq!(v.clients.len(), 1, "the restarted client is the same computer");
+
+    // Entering it again brings the text back (it used to be skipped as an echo).
+    cap_tx.send(enter()).await.unwrap();
+    wait_clip(&clip2, "text back on the restarted client", |c| c.text.as_deref() == Some("copied on the client")).await;
+
+    // The restarted client offers a file, then restarts once more before the paste.
+    let src = tempfile::tempdir().unwrap();
+    let doc = src.path().join("report.pdf");
+    std::fs::write(&doc, vec![7u8; 4096]).unwrap();
+    clip2.set_external(ClipData { files: vec![doc], ..Default::default() });
+    cap_tx.send(back()).await.unwrap();
+    wait_for(&mut st, "offer on server", |v| v.offer.is_some()).await;
+    assert!(cap_ctl.calls.lock().unwrap().contains(&ControlCall::PasteHold(true)));
+    cli.commands.send(glidedesk_core::ClientCommand::Shutdown(GoodbyeReason::Restarting)).await.unwrap();
+
+    // The offer died with that link: the paste shortcut is released, the offer is gone.
+    let v = wait_for(&mut st, "offer withdrawn", |v| v.offer.is_none()).await;
+    assert!(v.activity.iter().any(|a| a.text.contains("no longer offered")), "{:?}", v.activity);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while cap_ctl.calls.lock().unwrap().iter().rev().find(|c| matches!(c, ControlCall::PasteHold(_)))
+            != Some(&ControlCall::PasteHold(false))
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("paste hold released");
+
+    // And it connects a third time as usual; the withdrawn offer's placeholder
+    // text is not passed on as if it were something the user copied.
+    let clip3 = MockClipboard::default();
+    let cli = clip_client(&addr, &clip3);
+    wait_for(&mut st, "online a third time", |v| v.clients.iter().any(|c| c.state == HealthState::Online)).await;
+    cap_tx.send(enter()).await.unwrap();
+    wait_for(&mut st, "cursor on the client", |v| v.focus == Some(CLIENT_ID)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(glidedesk_clipboard::Clipboard::sequence(&clip3), 0, "placeholder sent: {:?}", clip3.contents());
+    cap_tx.send(back()).await.unwrap();
+    cli.commands.send(glidedesk_core::ClientCommand::Shutdown(GoodbyeReason::Quitting)).await.unwrap();
+    srv.commands.send(ServerCommand::Shutdown(GoodbyeReason::Stopping)).await.unwrap();
+}
+
+/// The other way round: a server that restarted gets the client's clipboard
+/// again, even when that clipboard came from the server before.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restarted_server_gets_the_client_clipboard_again() {
+    use glidedesk_clipboard::ClipData;
+    use glidedesk_clipboard::mock::MockClipboard;
+
+    // A fixed port, so the restarted server is found at the same address.
+    let port = std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let mut cfg = server_config();
+    cfg.server.network.port = port;
+    let addr = format!("127.0.0.1:{port}");
+    let enter = || CaptureEvent::Motion { pos: Point::new(999, 100), dx: 5, dy: 0 };
+    let back = || CaptureEvent::Motion { pos: Point::new(999, 100), dx: -10, dy: 0 };
+
+    let server_clip = MockClipboard::default();
+    let (srv, cap_tx, _) = clip_server(cfg.clone(), &server_clip);
+    let mut st = srv.status.clone();
+    let client_clip = MockClipboard::default();
+    let cli = clip_client(&addr, &client_clip);
+    wait_for(&mut st, "online", |v| v.clients.iter().any(|c| c.state == HealthState::Online)).await;
+    server_clip.set_external(ClipData { text: Some("copied on the server".into()), ..Default::default() });
+    cap_tx.send(enter()).await.unwrap();
+    wait_clip(&client_clip, "server text on client", |c| c.text.as_deref() == Some("copied on the server")).await;
+    cap_tx.send(back()).await.unwrap();
+
+    // The server restarts with an empty clipboard (and meets the client anew).
+    srv.commands.send(ServerCommand::Shutdown(GoodbyeReason::Restarting)).await.unwrap();
+    let _ = srv.task.await;
+    let server_clip = MockClipboard::default();
+    let (srv, cap_tx, _) = clip_server(cfg, &server_clip);
+    let mut st = srv.status.clone();
+    wait_for(&mut st, "online after the restart", |v| v.clients.iter().any(|c| c.state == HealthState::Online)).await;
+    cap_tx.send(enter()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    cap_tx.send(back()).await.unwrap();
+    wait_clip(&server_clip, "client clipboard on the restarted server", |c| {
+        c.text.as_deref() == Some("copied on the server")
+    })
+    .await;
+
+    cli.commands.send(glidedesk_core::ClientCommand::Shutdown(GoodbyeReason::Quitting)).await.unwrap();
+    srv.commands.send(ServerCommand::Shutdown(GoodbyeReason::Stopping)).await.unwrap();
+}
