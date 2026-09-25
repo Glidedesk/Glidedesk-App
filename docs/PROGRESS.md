@@ -209,3 +209,14 @@ Known gaps (v4): still no real Windows device test from this Mac; the lab covers
       (`keymap::mac_aux_key`) and forwarded; buttons 6+ swallowed, not sent as middle.
       Real-tap tests on macOS CI (`GLIDEDESK_TAP_TESTS`): posted ⌘C and volume-up reach the client.
       Limit: actions a utility performs through a private system API (not as events) can't be caught.
+
+### Fix: the Mac's mouse gestures stopped working
+- [x] Cause: the session-level tap (added for remapped buttons) ran all the time and asked for
+      gesture events; a tap that sees gesture events turns the Mac's gestures off, even when it
+      lets them through.
+- [x] Fix: the session tap runs only while a client has control (on before `grabbed`, off after);
+      gesture + system-defined events are only asked for by it. So on the Mac gestures work as
+      before, and on a client gestures / extra buttons / media keys never act on the Mac (they
+      can't switch spaces or pull focus back). The "let through" marker is random per run.
+      Real-tap test on macOS CI: the session tap is off, on while grabbed, off again.
+      Reviewed by the ecc rust-reviewer agent (2 findings, both fixed).

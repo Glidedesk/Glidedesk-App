@@ -280,13 +280,20 @@ impl std::fmt::Debug for Control {
 
 impl CaptureControl for Control {
     fn set_grab(&self, grab: bool) {
+        // The session tap only runs while another computer has control (see
+        // `GRAB_ONLY`). It is on before `grabbed` says so and off only after:
+        // `session_callback` passes everything while not grabbed, so no event
+        // posted in between can slip through to this Mac.
+        let session = self.0.session_tap.get();
+        if grab && let Some(t) = session {
+            CGEvent::tap_enable(&t.0, true);
+        }
         let was = self.0.grabbed.swap(grab, Ordering::SeqCst);
         if was == grab {
             return;
         }
-        // The session tap only runs while another computer has control (see `GRAB_ONLY`).
-        if let Some(t) = self.0.session_tap.get() {
-            CGEvent::tap_enable(&t.0, grab);
+        if !grab && let Some(t) = session {
+            CGEvent::tap_enable(&t.0, false);
         }
         if grab {
             self.0.gate.on_grab();
@@ -402,9 +409,20 @@ const SYSTEM_DEFINED: u32 = 14;
 /// Its subtype for media / special keys (`NX_SUBTYPE_AUX_CONTROL_BUTTONS`).
 const AUX_CONTROL_BUTTONS: i16 = 8;
 
-/// Put on events the HID tap lets through while grabbed (key releases of keys
-/// held before the grab), so the session tap lets them through as well.
-const PASSED_MARK: i64 = 0x676C_6964; // "glid"
+/// Put (as `EventSourceUserData`) on events the HID tap lets through while
+/// grabbed (key releases of keys held before the grab), so the session tap lets
+/// them through as well. Other input tools tag their own events in the same
+/// field, so the value is random per run rather than a constant they could share.
+fn passed_mark() -> i64 {
+    static MARK: OnceLock<i64> = OnceLock::new();
+    *MARK.get_or_init(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| u64::try_from(d.as_nanos() & u128::from(u64::MAX)).unwrap_or(0));
+        let mixed = (nanos ^ (u64::from(std::process::id()) << 32)).rotate_left(17) | 1;
+        i64::from_ne_bytes(mixed.to_ne_bytes())
+    })
+}
 
 /// The HID tap: every real keyboard / mouse event, before anything else.
 unsafe extern "C-unwind" fn tap_callback(
@@ -424,7 +442,7 @@ unsafe extern "C-unwind" fn tap_callback(
     }
     let out = handle(shared, ty, ev, pass);
     if !out.is_null() && shared.grabbed.load(Ordering::Relaxed) {
-        CGEvent::set_integer_value_field(Some(ev), CGEventField::EventSourceUserData, PASSED_MARK);
+        CGEvent::set_integer_value_field(Some(ev), CGEventField::EventSourceUserData, passed_mark());
     }
     out
 }
@@ -448,7 +466,7 @@ unsafe extern "C-unwind" fn session_callback(
     if tap_disabled(shared, ty) || !shared.grabbed.load(Ordering::Relaxed) {
         return pass;
     }
-    if CGEvent::integer_value_field(Some(ev), CGEventField::EventSourceUserData) == PASSED_MARK {
+    if CGEvent::integer_value_field(Some(ev), CGEventField::EventSourceUserData) == passed_mark() {
         return pass;
     }
     handle(shared, ty, ev, pass)
