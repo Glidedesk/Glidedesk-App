@@ -79,9 +79,9 @@ export function ClientHome({ status, config, update }: { status: AgentStatus; co
             onChange={(v) => update((x) => void (x.client.key_remap = v === "server" ? null : v), true)}
             options={[
               ["server", "Use server setting"],
-              ["auto", "Automatic"],
-              ["none", "Keep as is"],
-              ["swap-ctrl-meta", "Always swap"],
+              ["none", "Native (like a keyboard plugged into it)"],
+              ["auto", "Swap Cmd and Ctrl between Mac and PC"],
+              ["swap-ctrl-meta", "Always swap Cmd and Ctrl"],
             ]}
           />
         </Row>

@@ -11,7 +11,7 @@ use glidedesk_proto::{DEFAULT_PORT, DeviceId};
 use serde::{Deserialize, Serialize};
 
 /// Current schema version written by this build.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -244,13 +244,14 @@ impl Default for Visuals {
     }
 }
 
-/// Modifier translation between platforms (PLAN §3.4.2).
+/// Modifier translation between platforms (PLAN §3.4.2, §14 B8).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RemapPreset {
-    /// Swap Cmd↔Ctrl when a Mac controls Windows or the other way round.
-    #[default]
+    /// Swap Cmd↔Ctrl only when a Mac controls a PC or the other way round.
     Auto,
+    /// Native: every key does what it does on a keyboard plugged into that computer.
+    #[default]
     None,
     SwapCtrlMeta,
 }
@@ -282,7 +283,7 @@ impl Default for ClientEntry {
             mouse_speed: 1.0,
             scroll_speed: 1.0,
             scroll_invert: false,
-            key_remap: RemapPreset::Auto,
+            key_remap: RemapPreset::None,
             clipboard: true,
             files: true,
             relative_mouse: false,

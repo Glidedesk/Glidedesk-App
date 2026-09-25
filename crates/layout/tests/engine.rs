@@ -248,3 +248,28 @@ proptest! {
         }
     }
 }
+
+/// §14 B7: the client (2000 wide) is twice as wide as the server (1000). The
+/// server's capture delivers steady motion while the cursor is away (it is
+/// re-pinned to the screen centre), so crossing the whole client and pushing
+/// on its far edge always returns home on the first try.
+#[test]
+fn crossing_a_wide_client_and_back_returns_home_first_time() {
+    let mut e = engine(LinkSpec::simple(SERVER, Side::Right, CLIENT));
+    assert!(matches!(e.on_local_move(Point::new(999, 200), 5, 0, ctx()), Outcome::Enter { .. }));
+    for _ in 0..150 {
+        let out = e.on_remote_move(20, 0, ctx());
+        assert!(matches!(out, Outcome::Move { .. } | Outcome::None));
+    }
+    let mut back = None;
+    for i in 0..200 {
+        if let Outcome::Return { pos, .. } = e.on_remote_move(-20, 0, ctx()) {
+            back = Some((i, pos));
+            break;
+        }
+    }
+    let (steps, pos) = back.expect("never came back");
+    assert!(steps <= 101, "took {steps} pushes");
+    assert_eq!(pos.x, 999);
+    assert_eq!(e.focus(), Focus::Local);
+}

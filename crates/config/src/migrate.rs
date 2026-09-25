@@ -17,7 +17,28 @@ pub fn schema_version(table: &Table) -> u32 {
 }
 
 /// `STEPS[i]` migrates version `i + 1` to `i + 2`.
-const STEPS: &[fn(&mut Table)] = &[];
+const STEPS: &[fn(&mut Table)] = &[v1_to_v2];
+
+/// v2: keys behave natively on each computer by default (§14 B8). The old
+/// default "auto" (swap Cmd/Ctrl between Mac and PC) becomes "none"; an
+/// explicit "swap-ctrl-meta" is kept.
+fn v1_to_v2(t: &mut Table) {
+    let native = |v: &mut toml::Value| {
+        if v.as_str() == Some("auto") {
+            *v = toml::Value::String("none".into());
+        }
+    };
+    if let Some(clients) = t.get_mut("server").and_then(|s| s.get_mut("clients")).and_then(toml::Value::as_array_mut) {
+        for c in clients {
+            if let Some(v) = c.get_mut("key_remap") {
+                native(v);
+            }
+        }
+    }
+    if let Some(v) = t.get_mut("client").and_then(|c| c.get_mut("key_remap")) {
+        native(v);
+    }
+}
 
 /// Upgrades `table` from `from` to [`SCHEMA_VERSION`].
 pub fn upgrade(table: &mut Table, from: u32) {
@@ -34,6 +55,18 @@ mod tests {
     #[test]
     fn steps_cover_every_version() {
         assert_eq!(STEPS.len() + 1, SCHEMA_VERSION as usize);
+    }
+
+    #[test]
+    fn v2_makes_keys_native() {
+        let mut t: Table = toml::from_str(
+            "[client]\nkey_remap = \"auto\"\n[[server.clients]]\nkey_remap = \"auto\"\n[[server.clients]]\nkey_remap = \"swap-ctrl-meta\"\n",
+        )
+        .unwrap();
+        upgrade(&mut t, 1);
+        assert_eq!(t["client"]["key_remap"].as_str(), Some("none"));
+        assert_eq!(t["server"]["clients"][0]["key_remap"].as_str(), Some("none"));
+        assert_eq!(t["server"]["clients"][1]["key_remap"].as_str(), Some("swap-ctrl-meta"));
     }
 
     #[test]

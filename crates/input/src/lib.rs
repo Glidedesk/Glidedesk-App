@@ -194,6 +194,16 @@ pub fn fullscreen_app() -> Option<String> {
     None
 }
 
+/// macOS Secure Keyboard Entry is on: key presses can't be captured (they stay
+/// on this computer). Always `false` elsewhere.
+#[must_use]
+pub fn secure_input_active() -> bool {
+    #[cfg(target_os = "macos")]
+    return macos::secure_input_active();
+    #[allow(unreachable_code)]
+    false
+}
+
 /// Called once at process start (Windows: per-monitor DPI awareness).
 pub fn init_process() {
     #[cfg(target_os = "windows")]

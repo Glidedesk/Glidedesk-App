@@ -277,9 +277,8 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
 unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_INPUT => {
-            if let Some(shared) = active()
-                && !shared.grabbed.load(Ordering::Relaxed)
-            {
+            if let Some(shared) = active() {
+                let grabbed = shared.grabbed.load(Ordering::Relaxed);
                 let mut raw = RAWINPUT::default();
                 let mut size = u32::try_from(std::mem::size_of::<RAWINPUT>()).unwrap_or(0);
                 let header = u32::try_from(std::mem::size_of::<RAWINPUTHEADER>()).unwrap_or(0);
@@ -297,8 +296,19 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                     // SAFETY: dwType says the union holds mouse data.
                     let m = unsafe { raw.data.mouse };
                     let relative = m.usFlags.0 & MOUSE_MOVE_ABSOLUTE.0 == 0;
-                    if relative
-                        && (m.lLastX != 0 || m.lLastY != 0)
+                    let moved = relative && (m.lLastX != 0 || m.lLastY != 0);
+                    if moved && grabbed {
+                        // The hook normally keeps the cursor on the pin. If it moved,
+                        // the hook didn't see this input (an elevated window is in
+                        // front, or Windows dropped a slow hook): forward the raw
+                        // motion and pull the cursor back, so it can't wander on this PC.
+                        let pin = *lock(&shared.pin);
+                        if cursor_pos().is_some_and(|p| p != pin) {
+                            shared.emit(CaptureEvent::Motion { pos: pin, dx: m.lLastX, dy: m.lLastY });
+                            // SAFETY: plain Win32 call.
+                            let _ = unsafe { SetCursorPos(pin.x, pin.y) };
+                        }
+                    } else if moved
                         && let Some(pos) = cursor_pos()
                         && shared.on_outer_edge(pos)
                     {

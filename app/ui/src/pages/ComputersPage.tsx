@@ -24,7 +24,7 @@ function ClientSettings({ entry, update }: { entry: ClientEntry; update: Update 
         <Row label="Scroll speed">
           <NumberInput label="Scroll speed" value={entry.scroll_speed} min={0.1} max={10} step={0.1} unit="×" onChange={(v) => set("scroll_speed", v)} />
         </Row>
-        <Row label="Reverse scrolling" hint="Useful between a Mac with natural scrolling and a PC.">
+        <Row label="Reverse scrolling" hint="Scrolling already follows each computer's own setting (e.g. natural scrolling on a Mac). Turn on only to flip it for this computer.">
           <Switch label="Reverse scrolling" checked={entry.scroll_invert} onChange={(v) => set("scroll_invert", v)} />
         </Row>
         <Row label="Relative mouse (games)" hint="Sends movement instead of positions. Use for full-screen games.">
@@ -32,15 +32,15 @@ function ClientSettings({ entry, update }: { entry: ClientEntry; update: Update 
         </Row>
       </Section>
       <Section title="Keyboard">
-        <Row label="Cmd / Ctrl" hint="Auto swaps Cmd and Ctrl between a Mac and a PC so shortcuts keep working.">
+        <Row label="Cmd / Ctrl" hint="Native: each key works as on that computer's own keyboard (⌘ = Windows key, ⌥ = Alt). Swap keeps Mac shortcuts on a PC.">
           <Select<RemapPreset>
             label="Modifier mapping"
             value={entry.key_remap}
             onChange={(v) => set("key_remap", v)}
             options={[
-              ["auto", "Automatic"],
-              ["none", "Keep as is"],
-              ["swap-ctrl-meta", "Always swap"],
+              ["none", "Native (like a keyboard plugged into it)"],
+              ["auto", "Swap Cmd and Ctrl between Mac and PC"],
+              ["swap-ctrl-meta", "Always swap Cmd and Ctrl"],
             ]}
           />
         </Row>

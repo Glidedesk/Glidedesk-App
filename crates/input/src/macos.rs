@@ -106,6 +106,51 @@ fn cg(p: Point) -> CGPoint {
     CGPoint { x: f64::from(p.x), y: f64::from(p.y) }
 }
 
+/// Warps the cursor to `p` without the 0.25 s input pause macOS adds after a
+/// warp, and keeps mouse and cursor disconnected while grabbed.
+fn repin(p: Point) {
+    let _ = CGWarpMouseCursorPosition(cg(p));
+    // Re-associating right after a warp cancels the local-events suppression interval.
+    let _ = CGAssociateMouseAndMouseCursorPosition(true);
+    let _ = CGAssociateMouseAndMouseCursorPosition(false);
+}
+
+/// macOS "natural" scrolling (System Settings → Mouse/Trackpad). Scroll is sent
+/// between computers in *device* direction (wheel away from you = up, as on a
+/// PC); each Mac turns it natural again on its own side, so every computer
+/// scrolls the way it is set up (§14 B8). Cached; re-read every few seconds.
+fn natural_scrolling() -> bool {
+    use std::sync::atomic::AtomicU64;
+    static VALUE: AtomicBool = AtomicBool::new(true);
+    static READ_AT: AtomicU64 = AtomicU64::new(0);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    if now.saturating_sub(READ_AT.load(Ordering::Relaxed)) >= 5 {
+        READ_AT.store(now, Ordering::Relaxed);
+        let defaults = objc2_foundation::NSUserDefaults::standardUserDefaults();
+        let key = objc2_foundation::NSString::from_str("com.apple.swipescrolldirection");
+        // Missing key = the system default, which is natural scrolling on.
+        let on = defaults.objectForKey(&key).is_none() || defaults.boolForKey(&key);
+        VALUE.store(on, Ordering::Relaxed);
+    }
+    VALUE.load(Ordering::Relaxed)
+}
+
+/// Distance (points) the real cursor may drift from the pin before it is pulled back.
+const REPIN_DRIFT: i32 = 60;
+
+#[link(name = "Carbon", kind = "framework")]
+unsafe extern "C" {
+    fn IsSecureEventInputEnabled() -> bool;
+}
+
+/// Secure Keyboard Entry (password fields, Terminal's "Secure Keyboard Entry",
+/// some password managers) hides key presses from every event tap: typing then
+/// stays on this Mac instead of going to the other computer.
+pub fn secure_input_active() -> bool {
+    // SAFETY: HIToolbox query without arguments.
+    unsafe { IsSecureEventInputEnabled() }
+}
+
 pub fn permissions() -> Permissions {
     Permissions { accessibility: CGPreflightPostEventAccess(), input_monitoring: CGPreflightListenEventAccess() }
 }
@@ -223,11 +268,17 @@ impl CaptureControl for Control {
         }
         if grab {
             self.0.gate.on_grab();
-            if let Some(p) = cursor_pos() {
-                *lock(&self.0.pin) = p;
-            }
+            // Park the hidden cursor in the middle of the main screen. macOS keeps
+            // moving the real cursor under an event tap (and "disconnect mouse from
+            // cursor" only applies to the foreground app), so it is pulled back
+            // here whenever it drifts (see `repin`). Parked at the edge it used to
+            // hit the screen border, stop producing motion, and the pointer on the
+            // other computer got stuck before it could come back (§14 B5/B7).
+            let centre = to_rect(CGDisplayBounds(CGMainDisplayID()));
+            let pin = Point::new(centre.x + centre.w / 2, centre.y + centre.h / 2);
+            *lock(&self.0.pin) = pin;
             allow_background_cursor_hiding();
-            let _ = CGAssociateMouseAndMouseCursorPosition(false);
+            repin(pin);
             let _ = CGDisplayHideCursor(CGMainDisplayID());
         } else {
             let _ = CGAssociateMouseAndMouseCursorPosition(true);
@@ -260,6 +311,11 @@ impl CaptureControl for Control {
         }
     }
 }
+
+/// Event types (`NSEventType` numbers) only swallowed while grabbed, never forwarded:
+/// tablet pointer/proximity, rotate/begin/end gesture, gesture, magnify, swipe,
+/// smart magnify, quick look, pressure, direct touch, change mode.
+const GRAB_ONLY: [u32; 13] = [23, 24, 18, 19, 20, 29, 30, 31, 32, 33, 34, 37, 38];
 
 fn mask(types: &[CGEventType]) -> u64 {
     types.iter().fold(0u64, |m, t| m | (1u64 << t.0))
@@ -320,7 +376,15 @@ unsafe extern "C-unwind" fn tap_callback(
             let loc = CGEvent::location(Some(ev));
             let pos = Point::new(loc.x.floor() as i32, loc.y.floor() as i32);
             let (dx, dy) = (field(CGEventField::MouseEventDeltaX) as i32, field(CGEventField::MouseEventDeltaY) as i32);
-            let pos = if shared.grabbed.load(Ordering::Relaxed) { *lock(&shared.pin) } else { pos };
+            let pos = if shared.grabbed.load(Ordering::Relaxed) {
+                let pin = *lock(&shared.pin);
+                if (pos.x - pin.x).abs() > REPIN_DRIFT || (pos.y - pin.y).abs() > REPIN_DRIFT {
+                    repin(pin);
+                }
+                pin
+            } else {
+                pos
+            };
             shared.emit(CaptureEvent::Motion { pos, dx, dy });
         }
         CGEventType::LeftMouseDown | CGEventType::LeftMouseUp => {
@@ -349,6 +413,9 @@ unsafe extern "C-unwind" fn tap_callback(
                     fixed(CGEventField::ScrollWheelEventFixedPtDeltaAxis2),
                 )
             };
+            // Natural scrolling inverted these before the tap saw them: undo it.
+            let sign = if natural_scrolling() { -1.0 } else { 1.0 };
+            let (dx, dy) = (dx * sign, dy * sign);
             if dx != 0.0 || dy != 0.0 {
                 shared.emit(CaptureEvent::Wheel { dx: dx.round() as i32, dy: dy.round() as i32 });
             }
@@ -377,6 +444,9 @@ unsafe extern "C-unwind" fn tap_callback(
                 return if shared.gate.on_key(key, down, grabbed) { std::ptr::null_mut() } else { pass };
             }
         }
+        // Trackpad gestures, Force Touch pressure and tablet events must not act on
+        // this Mac (e.g. swipe between spaces) while another computer has control.
+        t if GRAB_ONLY.contains(&t.0) => {}
         _ => return pass,
     }
     if shared.grabbed.load(Ordering::Relaxed) { std::ptr::null_mut() } else { pass }
@@ -403,22 +473,23 @@ pub fn start_capture() -> Result<Capture, InputError> {
     std::thread::Builder::new()
         .name("gd-capture".into())
         .spawn(move || {
-            let events = mask(&[
-                CGEventType::MouseMoved,
-                CGEventType::LeftMouseDown,
-                CGEventType::LeftMouseUp,
-                CGEventType::RightMouseDown,
-                CGEventType::RightMouseUp,
-                CGEventType::OtherMouseDown,
-                CGEventType::OtherMouseUp,
-                CGEventType::LeftMouseDragged,
-                CGEventType::RightMouseDragged,
-                CGEventType::OtherMouseDragged,
-                CGEventType::ScrollWheel,
-                CGEventType::KeyDown,
-                CGEventType::KeyUp,
-                CGEventType::FlagsChanged,
-            ]);
+            let events = GRAB_ONLY.iter().fold(0u64, |m, t| m | (1u64 << t))
+                | mask(&[
+                    CGEventType::MouseMoved,
+                    CGEventType::LeftMouseDown,
+                    CGEventType::LeftMouseUp,
+                    CGEventType::RightMouseDown,
+                    CGEventType::RightMouseUp,
+                    CGEventType::OtherMouseDown,
+                    CGEventType::OtherMouseUp,
+                    CGEventType::LeftMouseDragged,
+                    CGEventType::RightMouseDragged,
+                    CGEventType::OtherMouseDragged,
+                    CGEventType::ScrollWheel,
+                    CGEventType::KeyDown,
+                    CGEventType::KeyUp,
+                    CGEventType::FlagsChanged,
+                ]);
             let user = Arc::into_raw(thread_shared.clone()) as *mut c_void;
             // SAFETY: callback matches CGEventTapCallBack; `user` stays valid
             // until `Arc::from_raw` below, after the run loop has exited.
@@ -602,8 +673,10 @@ impl MacInjector {
 
     #[allow(clippy::cast_possible_truncation)]
     fn wheel(&mut self, dx: i32, dy: i32) -> Result<(), InputError> {
-        let fx = f64::from(dx) / UNITS_PER_PIXEL + self.wheel_rem.0;
-        let fy = f64::from(dy) / UNITS_PER_PIXEL + self.wheel_rem.1;
+        // Posted events skip the system's natural-scrolling inversion: apply it here.
+        let sign = if natural_scrolling() { -1.0 } else { 1.0 };
+        let fx = f64::from(dx) * sign / UNITS_PER_PIXEL + self.wheel_rem.0;
+        let fy = f64::from(dy) * sign / UNITS_PER_PIXEL + self.wheel_rem.1;
         let (px, py) = (fx.trunc(), fy.trunc());
         self.wheel_rem = (fx - px, fy - py);
         if px == 0.0 && py == 0.0 {

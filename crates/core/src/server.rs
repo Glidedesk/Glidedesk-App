@@ -28,6 +28,7 @@ const MONITOR_POLL: Duration = Duration::from_secs(2);
 const INPUT_QUEUE: usize = 1024;
 const CONTROL_QUEUE: usize = 64;
 const MAX_CLIENTS: usize = 64;
+const SECURE_INPUT_WARNING: &str = "typing";
 
 /// Commands from the agent / UI / tray.
 #[derive(Debug)]
@@ -341,7 +342,10 @@ impl Hub {
                     None => break,
                 },
                 _ = heartbeat.tick() => self.on_heartbeat(),
-                _ = monitor_poll.tick() => self.poll_monitors(),
+                _ = monitor_poll.tick() => {
+                    self.poll_monitors();
+                    self.check_secure_input();
+                }
                 _ = transfer_tick.tick(), if self.sync.transfers.any_active() => self.publish(),
                 () = sleep_until(deadline) => {
                     let out = self.engine.poll(Instant::now());
@@ -530,6 +534,7 @@ impl Hub {
                     self.send_input(machine, Input::Key { key: remap.apply(k), down: true });
                 }
                 self.push_clipboard(machine);
+                self.check_secure_input();
                 debug!(client = %machine, "cursor entered client");
                 self.publish();
             }
@@ -558,9 +563,9 @@ impl Hub {
         let preset = slot
             .and_then(|s| s.prefs.key_remap)
             .map(|v| match v {
-                1 => RemapPreset::None,
+                0 => RemapPreset::Auto,
                 2 => RemapPreset::SwapCtrlMeta,
-                _ => RemapPreset::Auto,
+                _ => RemapPreset::None,
             })
             .or_else(|| self.entry(id).map(|e| e.key_remap))
             .unwrap_or_default();
@@ -846,6 +851,25 @@ impl Hub {
         self.publish();
     }
 
+    /// macOS Secure Keyboard Entry keeps key presses on this Mac while a client
+    /// has control; say so instead of silently typing into the wrong computer.
+    fn check_secure_input(&mut self) {
+        let on = self.focused().is_some() && glidedesk_input::secure_input_active();
+        let has = self.warnings.iter().any(|w| w.starts_with(SECURE_INPUT_WARNING));
+        if on == has {
+            return;
+        }
+        if on {
+            self.warnings.push(format!(
+                "{SECURE_INPUT_WARNING}: an app on this Mac turned on Secure Keyboard Entry (a password field, \
+                 Terminal or a password manager), so typing can't be sent to other computers until it is closed"
+            ));
+        } else {
+            self.warnings.retain(|w| !w.starts_with(SECURE_INPUT_WARNING));
+        }
+        self.publish();
+    }
+
     fn poll_monitors(&mut self) {
         match (self.monitors)() {
             Ok(m) if m != self.local_monitors => {
@@ -1085,7 +1109,7 @@ impl Hub {
                 .map(|(id, s)| Machine { id: *id, monitors: s.monitors.clone() }),
         );
         let layout = Layout::build(machines, &self.config.layout.links);
-        self.warnings.retain(|w| w.starts_with("hotkey"));
+        self.warnings.retain(|w| w.starts_with("hotkey") || w.starts_with(SECURE_INPUT_WARNING));
         for w in layout.warnings() {
             match w {
                 Warning::SelectionFellBack { machine, side } => {
