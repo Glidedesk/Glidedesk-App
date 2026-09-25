@@ -116,7 +116,6 @@ fn repin(p: Point) {
     let _ = CGAssociateMouseAndMouseCursorPosition(false);
 }
 
-
 /// Turns off the pause (default 0.25 s) macOS inserts after a cursor warp, during
 /// which it drops real mouse input — felt as stutter while another computer has
 /// control. The call is deprecated but still honoured; resolved at run time.
