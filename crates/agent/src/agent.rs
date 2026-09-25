@@ -38,6 +38,8 @@ pub struct Agent {
     log_dir: String,
     /// Last permission check (`None` before the first one).
     permissions_ready: Option<bool>,
+    /// Last start failure already reported (retries don't repeat the notice).
+    last_failure: Option<String>,
 }
 
 impl Agent {
@@ -77,6 +79,7 @@ impl Agent {
             events,
             log_dir,
             permissions_ready: None,
+            last_failure: None,
         })
     }
 
@@ -137,6 +140,9 @@ impl Agent {
                 self.runtime = Runtime::Client(client::start(self.config.clone(), deps));
             }
         }
+        if self.error.is_none() {
+            self.last_failure = None;
+        }
         info!(role = ?self.config.device.role, "sharing started");
     }
 
@@ -155,8 +161,12 @@ impl Agent {
     }
 
     fn fail(&mut self, msg: String) {
-        error!("{msg}");
-        let _ = self.events.send(Event::Notice(NoticeView::Error { message: msg.clone() }));
+        // Retries fail the same way every few seconds: tell the user once.
+        if self.last_failure.as_deref() != Some(msg.as_str()) {
+            error!("{msg}");
+            let _ = self.events.send(Event::Notice(NoticeView::Error { message: msg.clone() }));
+            self.last_failure = Some(msg.clone());
+        }
         self.error = Some(msg);
     }
 
@@ -314,7 +324,13 @@ impl Agent {
                     "access to the keyboard and mouse was lost; see Advanced → Self-test".into()
                 });
             }
-            _ if ready && self.error.is_some() && matches!(self.runtime, Runtime::Idle) => self.start_runtime(),
+            // Still failing for a permission: try again (the OS check can lag
+            // behind System Settings; actually starting is the real test).
+            _ if self.error.as_deref().is_some_and(|e| ready || e.contains("missing permission"))
+                && matches!(self.runtime, Runtime::Idle) =>
+            {
+                self.start_runtime();
+            }
             _ => {}
         }
     }

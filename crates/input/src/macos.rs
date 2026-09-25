@@ -151,13 +151,23 @@ pub fn secure_input_active() -> bool {
     unsafe { IsSecureEventInputEnabled() }
 }
 
+/// Accessibility as of *now*. `CGPreflightPostEventAccess` can keep answering
+/// "no" for the rest of the process after the user grants access in System
+/// Settings; `AXIsProcessTrusted` follows changes live.
+fn accessibility_granted() -> bool {
+    // SAFETY: argument-less query of the process's trust state.
+    let trusted = unsafe { AXIsProcessTrusted() };
+    trusted || CGPreflightPostEventAccess()
+}
+
 pub fn permissions() -> Permissions {
-    Permissions { accessibility: CGPreflightPostEventAccess(), input_monitoring: CGPreflightListenEventAccess() }
+    Permissions { accessibility: accessibility_granted(), input_monitoring: CGPreflightListenEventAccess() }
 }
 
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
     fn AXIsProcessTrustedWithOptions(options: *const c_void) -> bool;
+    fn AXIsProcessTrusted() -> bool;
 }
 
 /// Shows macOS's "“Glidedesk” would like to control this computer" prompt and
@@ -168,7 +178,7 @@ unsafe extern "C" {
 /// both fall under it. Input Monitoring covers listen-only taps, which Glidedesk
 /// doesn't use, and granting it makes macOS ask to quit the app.
 pub fn request_permissions() {
-    if CGPreflightPostEventAccess() {
+    if accessibility_granted() {
         return;
     }
     let key = objc2_foundation::NSString::from_str("AXTrustedCheckOptionPrompt");
@@ -479,9 +489,8 @@ unsafe extern "C-unwind" fn tap_callback(
 
 pub fn start_capture() -> Result<Capture, InputError> {
     // An active (filtering) tap needs Accessibility only; see `request_permissions`.
-    if !CGPreflightPostEventAccess() {
-        return Err(InputError::Permission("Accessibility"));
-    }
+    // No pre-check: creating the tap is the real test (a cached "no" must not
+    // block a permission the user has just granted). It fails below without it.
     let (tx, rx) = mpsc::channel(CAPTURE_QUEUE);
     let shared = Arc::new(Shared {
         grabbed: AtomicBool::new(false),
@@ -591,7 +600,7 @@ impl std::fmt::Debug for MacInjector {
 unsafe impl Send for MacInjector {}
 
 pub fn injector() -> Result<Box<dyn Injector>, InputError> {
-    if !CGPreflightPostEventAccess() {
+    if !accessibility_granted() {
         return Err(InputError::Permission("Accessibility"));
     }
     let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState);
