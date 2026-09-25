@@ -1,19 +1,31 @@
-# Lint + tests on every push / pull request — one Linux runner (1× billing).
-# Budget notes: PLAN §13.1 (GitHub Free private repos: 2,000 min/month).
+# The one pipeline, on every push: all tests on GitHub's free hosted runners
+# (Linux, Windows and macOS natively), then — only when every test job is green —
+# the release. A failing test stops the pipeline: nothing is built or published.
+#   push to any branch / pull request → tests only
+#   push to main                      → tests → "Nightly" pre-release
+#   tag v*                            → tests → full release
+#   manual run (Actions → CI → Run)   → tests → draft release (macOS optional)
+# Budget (private repo, PLAN §13.1): Linux 1×, Windows 2×, macOS 10× minutes.
+# Docs-only pushes don't run (path filters don't apply to tags).
 name: CI
 
 on:
   push:
     branches: ["**"]
-    tags-ignore: ["v*"]
+    tags: ["v*"]
     paths-ignore: ["**.md", "docs/**", "graphify-out/**", "signing/**"]
   pull_request:
     paths-ignore: ["**.md", "docs/**", "graphify-out/**", "signing/**"]
   workflow_dispatch:
+    inputs:
+      macos:
+        description: "Also build the macOS release (uses ~10× minutes)"
+        type: boolean
+        default: true
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
   contents: read
@@ -21,18 +33,15 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
-  XWIN_ACCEPT_LICENSE: "1"
-  XWIN_CROSS_COMPILER: clang
-  # No debug info: CI only needs pass/fail. Halves target/ size (the runner's
-  # 14 GB disk filled up during the Windows cross-check) and speeds up linking.
+  # No debug info: CI only needs pass/fail. Smaller target/, faster links.
   CARGO_PROFILE_DEV_DEBUG: "0"
   CARGO_PROFILE_TEST_DEBUG: "0"
 
 jobs:
-  test:
-    name: Lint & test
+  linux:
+    name: Linux x64 — lint, tests, real agents
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
@@ -45,20 +54,85 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
-            librsvg2-dev libxdo-dev clang lld llvm
+            librsvg2-dev libxdo-dev xvfb x11-xserver-utils
+          # Keyboard/mouse injection through uinput, like a desktop user in group "input".
+          sudo chmod 666 /dev/uinput || true
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-          targets: x86_64-pc-windows-msvc
 
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci
+          shared-key: ci-linux
 
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-nextest,cargo-xwin
+          tool: cargo-nextest
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/ui/pnpm-lock.yaml
+
+      - name: UI — typecheck, tests, build (embedded into the app)
+        working-directory: app/ui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+          pnpm test
+          pnpm build
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Tests
+        run: cargo nextest run --workspace --locked --no-fail-fast
+
+      - name: Build the app
+        run: cargo build -p glidedesk-app --locked
+
+      - name: Real agents — connect, client restarts, self-test
+        run: |
+          Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp >/dev/null 2>&1 &
+          sleep 1
+          DISPLAY=:99 bash scripts/os-smoke.sh target/debug/glidedesk
+
+  native:
+    name: ${{ matrix.name }} — tests, real agents
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # xtask (packaging) only runs in the Linux builder image: not built on Windows.
+          - { name: Windows x64, os: windows-2025, exe: glidedesk.exe, skip: "--exclude xtask" }
+          - { name: macOS ARM64, os: macos-15, exe: glidedesk, skip: "" }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-${{ matrix.os }}
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
 
       - uses: pnpm/action-setup@v6
         with:
@@ -73,24 +147,40 @@ jobs:
         working-directory: app/ui
         run: |
           pnpm install --frozen-lockfile
-          pnpm typecheck
-          pnpm test
           pnpm build
 
-      - name: Format
-        run: cargo fmt --all -- --check
+      - name: Clippy (native)
+        run: cargo clippy --workspace ${{ matrix.skip }} --all-targets --locked -- -D warnings
 
-      - name: Clippy (Linux)
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests (native)
+        run: cargo nextest run --workspace ${{ matrix.skip }} --locked --no-fail-fast
 
-      - name: Tests
-        run: cargo nextest run --workspace --locked --no-fail-fast
+      - name: Build the app
+        run: cargo build -p glidedesk-app --locked
 
-      - name: Cache Windows SDK (xwin)
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/cargo-xwin
-          key: xwin-v1
+      - name: Real agents — connect, client restarts, self-test
+        run: |
+          set +e
+          bash scripts/os-smoke.sh "target/debug/${{ matrix.exe }}"
+          code=$?
+          set -e
+          if [ "$code" = 2 ]; then
+            # The runner refused keyboard/mouse access (can't be granted on CI): reported, not failed.
+            echo "::warning title=${{ matrix.name }}::agents could not get keyboard/mouse access on this runner"
+            exit 0
+          fi
+          exit "$code"
 
-      - name: Clippy (Windows x64 cross-check)
-        run: cargo xwin clippy --workspace --exclude xtask --target x86_64-pc-windows-msvc --locked -- -D warnings
+  release:
+    name: Release
+    needs: [linux, native]
+    # Only after every test job passed, and only for main, v* tags and manual runs.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      macos: ${{ github.event_name != 'workflow_dispatch' || inputs.macos }}
+    secrets: inherit

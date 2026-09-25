@@ -1,26 +1,20 @@
-# Builds installers and publishes them to GitHub Releases.
+# Builds installers and publishes them to GitHub Releases. Never runs by itself:
+# the CI pipeline (ci.yml) calls it only after every test job passed, so a red
+# test stops the release.
 #   push to main   → macOS ARM64 + Windows x64 + Linux x64/ARM64 → "Nightly" pre-release (replaced each time)
 #   tag v*         → the same → full release
-#   manual run     → the same as a draft release (macOS optional)
+#   manual CI run  → the same as a draft release (macOS optional)
 # Everything that can run on Linux does (1× billing); only the macOS app needs the Mac
-# runner (10×). Docs-only pushes don't build. See PLAN §13.1 for the budget.
+# runner (10×). See PLAN §13.1 for the budget.
 name: Release
 
 on:
-  push:
-    branches: [main]
-    tags: ["v*"]
-    paths-ignore: ["**.md", "docs/**", "graphify-out/**"]
-  workflow_dispatch:
+  workflow_call:
     inputs:
       macos:
         description: "Also build macOS (uses ~10× minutes)"
         type: boolean
         default: true
-
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
   contents: read
@@ -138,7 +132,7 @@ jobs:
     name: macOS Apple Silicon
     # Mac minutes cost 10× (≈120 billed min per build): built for every published
     # release — main (Nightly) and tags — and for manual runs when asked for.
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.macos)
+    if: inputs.macos
     runs-on: macos-15
     timeout-minutes: 45
     steps:

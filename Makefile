@@ -76,7 +76,7 @@ lab-stop:
 	docker rm -f gd-lab
 
 # Real server + client agents over loopback (connect, client restarts, self-test) on a
-# virtual X screen — the same script the "OS matrix" workflow runs on Windows and macOS.
+# virtual X screen — the same script CI runs on Linux, Windows and macOS on every push.
 os-smoke:
 	$(RUN) sh -c 'cd app/ui && pnpm install --frozen-lockfile >/dev/null && pnpm build >/dev/null && cd /src && cargo build -p glidedesk-app'
 	docker build -q -t glidedesk-lab -f docker/lab/Dockerfile docker/lab

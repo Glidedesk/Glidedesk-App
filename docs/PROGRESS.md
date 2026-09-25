@@ -179,3 +179,11 @@ Known gaps (v4): still no real Windows device test from this Mac; the lab covers
 - [x] First native run found 2 test assumptions on macOS (⌘V paste; IPC probe accept error)
       and xtask not building on Windows (excluded, as in ci.yml) — fixed; run 36149212960 green:
       Linux 137, Windows 134, macOS 138 tests; smoke PASSED on all three.
+
+### One pipeline: test on every push, release only when green
+- [x] `ci.yml` runs on every push/PR: Linux (fmt, UI typecheck/tests, clippy, tests, app build,
+      real agents), Windows x64 and macOS ARM64 (native clippy, tests, app build, real agents).
+      `release.yml` is only a reusable workflow now, called by CI with `needs: [linux, native]`
+      for main (Nightly), v* tags and manual runs — any red test job stops the release.
+      `os-matrix.yml` merged into it. Browser QA via the ecc Chrome MCP removed (plugin
+      `.mcp.json` emptied locally, backup `.mcp.json.bak-chrome-devtools`).
