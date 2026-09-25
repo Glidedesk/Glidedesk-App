@@ -47,7 +47,14 @@ impl Agent {
         events: broadcast::Sender<Event>,
         log_dir: String,
     ) -> Result<Self, String> {
-        let loaded = store.load_or_create().map_err(|e| e.to_string())?;
+        let mut loaded = store.load_or_create().map_err(|e| e.to_string())?;
+        if loaded.created && std::env::var_os("GLIDEDESK_PORTABLE").is_some() {
+            // A portable copy doesn't register itself at login unless asked to.
+            loaded.config.general.start_at_login = false;
+            if let Err(e) = store.save(&loaded.config) {
+                warn!(error = %e, "could not save the portable defaults");
+            }
+        }
         let issues = loaded.issues.iter().map(|i| format!("{}: {}", i.key, i.message)).collect();
         let mut state = StateFile::load(store.dir());
         if state.state.last_version.as_deref() != Some(VERSION) {

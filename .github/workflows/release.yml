@@ -222,5 +222,5 @@ jobs:
           else
             gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
             gh release create nightly output-build/* --prerelease --target "$GITHUB_SHA" --title "Nightly" \
-              --notes "Latest build of main (${GITHUB_SHA::7}): macOS Apple Silicon, Windows x64, Linux x64 and ARM64."
+              --notes "Latest build of main (${GITHUB_SHA::7}): macOS Apple Silicon, Windows x64 (installer + portable), Linux x64 and ARM64."
           fi

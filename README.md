@@ -7,7 +7,7 @@ files follow it. One app — every computer can be the server or a client.
 | System | Build | File in a release / `output-build/` |
 |---|---|---|
 | macOS 13+ | Apple Silicon (arm64) | `Glidedesk_<ver>_macos-arm64.dmg` |
-| Windows 10 22H2 / 11 / Server 2016+ | x64 | `…_windows-x64-setup.exe`, `…_windows-x64-offline-setup.exe` (includes WebView2) |
+| Windows 10 22H2 / 11 / Server 2016+ | x64 | `…_windows-x64-setup.exe`, `…_windows-x64-offline-setup.exe` (includes WebView2), `…_windows-x64-portable.zip` (no install) |
 | Linux (X11 or Wayland*) | x64, arm64 | `…_linux-<arch>.deb`, `.rpm`, `.tar.gz` |
 
 \* On Wayland, Linux can be a **client**. Sharing a Linux computer's own keyboard and
@@ -22,6 +22,10 @@ mouse (server role) needs an X11 session until Wayland desktops offer a capture 
 - **Windows:** run the setup. The same file installs, **updates** (keeps settings, restarts the app)
   or repairs. Silent: `setup.exe /S [/D=C:\path] [/NORESTART]` (exit code 3 = installed with a
   warning, e.g. firewall rule failed).
+- **Windows portable:** unzip `…_windows-x64-portable.zip` anywhere (even a USB stick) and run
+  `Glidedesk.exe`. Nothing is installed: settings, logs and received files stay in
+  `Glidedesk Data` next to it, and it doesn't start at login unless you turn that on. To
+  remove it, quit from the tray and delete the folder.
 - **Linux:** `sudo apt install ./Glidedesk_<ver>_linux-<arch>.deb` or
   `sudo dnf install ./Glidedesk_<ver>_linux-<arch>.rpm`, or unpack the `.tar.gz` and run
   `sudo ./install.sh`. The package adds a udev rule so the signed-in user can create a virtual

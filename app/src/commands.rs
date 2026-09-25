@@ -106,6 +106,10 @@ pub fn open_external(target: String) -> Result<(), String> {
             #[allow(unreachable_code)]
             Err("not supported".into())
         }
+        "uninstall" if crate::is_portable() => Err(
+            "This is the portable version: quit Glidedesk and delete its folder (settings are in \"Glidedesk Data\" inside it)."
+                .into(),
+        ),
         "uninstall" => {
             let exe = std::env::current_exe().map_err(|e| e.to_string())?;
             let dir = exe.parent().ok_or("no install folder")?;

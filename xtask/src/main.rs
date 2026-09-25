@@ -337,6 +337,43 @@ fn package_windows() -> Result {
         run(c.arg(&nsi))?;
         eprintln!("✓ {}", setup.display());
     }
+    let portable = out.join(format!("{PRODUCT}_{v}_windows-x64-portable.zip"));
+    portable_zip(&signed, &portable)?;
+    eprintln!("✓ {}", portable.display());
+    Ok(())
+}
+
+const PORTABLE_README: &str = "Glidedesk (portable)\r\n\
+====================\r\n\r\n\
+Run Glidedesk.exe from this folder (a USB stick works too). Nothing is installed:\r\n\
+settings, logs and received files stay in the \"Glidedesk Data\" folder here, and\r\n\
+Glidedesk does not start at login unless you turn that on in General.\r\n\r\n\
+- Windows may ask to allow Glidedesk on private networks: choose Allow.\r\n\
+- Needs the Microsoft Edge WebView2 Runtime (built into Windows 11 and current\r\n\
+  Windows 10). If the window stays blank, use the installer instead.\r\n\
+- To remove it: quit Glidedesk from the tray and delete this folder.\r\n\
+- Keep glidedesk.portable next to the program; without it Glidedesk uses your\r\n\
+  user profile like the installed version.\r\n";
+
+/// Portable Windows build: the signed program, the marker that keeps its data
+/// beside it (see `app/src/main.rs`) and a short read-me.
+fn portable_zip(exe: &Path, dest: &Path) -> Result {
+    use std::io::Write as _;
+    let _ = fs::remove_file(dest);
+    let file = fs::File::create(dest).map_err(|e| format!("{}: {e}", dest.display()))?;
+    let mut zip = zip::ZipWriter::new(file);
+    let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let exe_bytes = fs::read(exe).map_err(|e| format!("{}: {e}", exe.display()))?;
+    let marker = "This file keeps Glidedesk portable: its data stays in \"Glidedesk Data\" next to it.\r\n";
+    for (name, bytes) in [
+        (format!("{PRODUCT}/{PRODUCT}.exe"), exe_bytes.as_slice()),
+        (format!("{PRODUCT}/glidedesk.portable"), marker.as_bytes()),
+        (format!("{PRODUCT}/README.txt"), PORTABLE_README.as_bytes()),
+    ] {
+        zip.start_file(name, opts).map_err(|e| e.to_string())?;
+        zip.write_all(bytes).map_err(|e| e.to_string())?;
+    }
+    zip.finish().map_err(|e| e.to_string())?;
     Ok(())
 }
 

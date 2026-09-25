@@ -53,7 +53,35 @@ pub async fn sync_autostart(app: &AppHandle, link: &Link) {
     }
 }
 
+/// Name of the marker file that makes a copy portable (the Windows portable zip ships it).
+pub const PORTABLE_MARKER: &str = "glidedesk.portable";
+
+/// Portable copy: a `glidedesk.portable` file next to the executable keeps all
+/// settings, logs and received files in `Glidedesk Data` beside it (nothing in
+/// the user profile). Must run before any other thread starts.
+fn enable_portable_mode() {
+    if std::env::var_os("GLIDEDESK_HOME").is_some() {
+        return;
+    }
+    let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(std::path::Path::to_path_buf)) else {
+        return;
+    };
+    if dir.join(PORTABLE_MARKER).is_file() {
+        // SAFETY: called first thing in `main`, before any thread exists; the
+        // agent child inherits the variable from here.
+        unsafe {
+            std::env::set_var("GLIDEDESK_HOME", dir.join("Glidedesk Data"));
+            std::env::set_var("GLIDEDESK_PORTABLE", "1");
+        }
+    }
+}
+
+pub fn is_portable() -> bool {
+    std::env::var_os("GLIDEDESK_PORTABLE").is_some()
+}
+
 fn main() {
+    enable_portable_mode();
     // One executable does everything (PLAN §13.1): background agent, self-test,
     // installer hook, or the tray/settings app.
     let args: Vec<String> = std::env::args().skip(1).collect();
