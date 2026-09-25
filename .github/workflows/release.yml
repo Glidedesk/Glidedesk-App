@@ -1,8 +1,9 @@
 # Builds installers and publishes them to GitHub Releases.
-#   push to main   → Windows x64 + Linux x64/ARM64 → "Nightly" pre-release (replaced each time)
-#   tag v*         → + macOS ARM64 (Mac runner, 10× billing: only here) → full release
-#   manual run     → like a tag build, as a draft release
-# Everything that can run on Linux does (1× billing). See PLAN §13.1 for the budget.
+#   push to main   → macOS ARM64 + Windows x64 + Linux x64/ARM64 → "Nightly" pre-release (replaced each time)
+#   tag v*         → the same → full release
+#   manual run     → the same as a draft release (macOS optional)
+# Everything that can run on Linux does (1× billing); only the macOS app needs the Mac
+# runner (10×). Docs-only pushes don't build. See PLAN §13.1 for the budget.
 name: Release
 
 on:
@@ -38,7 +39,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Version
         run: |
           if [ "$IS_TAG" = true ]; then echo "GLIDEDESK_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"; fi
@@ -56,15 +57,15 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-xwin
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 12
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: app/ui/pnpm-lock.yaml
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cache/cargo-xwin
@@ -82,7 +83,7 @@ jobs:
             echo "::notice::No GLIDEDESK_WIN_PFX_BASE64 secret — Windows files will be unsigned."
           fi
       - run: cargo xtask package windows
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows
           path: output-build/*
@@ -101,7 +102,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Version
         run: |
           if [ "$IS_TAG" = true ]; then echo "GLIDEDESK_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"; fi
@@ -117,16 +118,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release-linux-${{ matrix.arch }}
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 12
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: app/ui/pnpm-lock.yaml
       - run: cargo xtask package linux
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-${{ matrix.arch }}
           path: output-build/*
@@ -135,12 +136,13 @@ jobs:
 
   macos:
     name: macOS Apple Silicon
-    # Mac minutes cost 10×: only for version tags or when asked for.
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.macos)
+    # Mac minutes cost 10× (≈120 billed min per build): built for every published
+    # release — main (Nightly) and tags — and for manual runs when asked for.
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.macos)
     runs-on: macos-15
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Version
         run: |
           if [ "$IS_TAG" = true ]; then echo "GLIDEDESK_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"; fi
@@ -150,10 +152,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release-macos
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 12
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -177,7 +179,7 @@ jobs:
             echo "::notice::No GLIDEDESK_MAC_P12_BASE64 secret — the app gets an ad-hoc signature."
           fi
       - run: cargo xtask package macos
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos
           path: output-build/*
@@ -187,15 +189,15 @@ jobs:
   publish:
     name: Publish
     needs: [windows, linux, macos]
-    # Run even when the macOS job was skipped (main-branch nightly).
+    # Run even when the macOS job was skipped (manual run without macOS).
     if: always() && needs.windows.result == 'success' && needs.linux.result == 'success' && needs.macos.result != 'failure' && needs.macos.result != 'cancelled'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: output-build
           merge-multiple: true
@@ -220,5 +222,5 @@ jobs:
           else
             gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
             gh release create nightly output-build/* --prerelease --target "$GITHUB_SHA" --title "Nightly" \
-              --notes "Latest build of main (${GITHUB_SHA::7}). Windows x64 and Linux; macOS is built for version tags."
+              --notes "Latest build of main (${GITHUB_SHA::7}): macOS Apple Silicon, Windows x64, Linux x64 and ARM64."
           fi

@@ -73,13 +73,13 @@ make release        # macOS arm64 + Windows x64 + Linux (this machine's arch) �
 ## GitHub Actions
 
 - **Every push / pull request:** lint, tests, UI tests, Windows cross-check (`ci.yml`).
-- **Push to `main`:** Windows x64 + Linux x64/arm64 installers → **Nightly** pre-release.
-- **Tag `vX.Y.Z`:** all of the above **plus macOS** → a normal release with every file,
-  checksums and signature: `git tag v0.2.0 && git push --tags`.
+- **Push to `main`:** macOS + Windows x64 + Linux x64/arm64 installers → **Nightly** pre-release.
+- **Tag `vX.Y.Z`:** the same → a normal release with every file, checksums and signature:
+  `git tag v0.2.0 && git push --tags`.
 
-Designed for the GitHub Free private-repo allowance (2,000 min/month): all builds except macOS
-run on Linux runners (1×), macOS (10×) only runs for tags. A normal month (~30 pushes,
-2 releases) uses about 1,300 minutes. Add the four secrets from `.signing/github-secrets.env`
-to sign CI builds; without them builds are ad-hoc/unsigned but still work.
+GitHub Free private repos get 2,000 minutes/month; Linux counts 1×, macOS 10×. One code push
+to `main` costs about 170 billed minutes (CI ≈ 12, Windows/Linux ≈ 35, macOS ≈ 120), so about
+ten releases a month fit; docs-only pushes cost nothing, and a push to another branch runs only
+CI (≈ 12). The four secrets from `.signing/github-secrets.env` sign CI builds (already set).
 
 Docs: `PLAN.md` (design), `docs/PROGRESS.md` (status), `docs/TESTING.md` (real-device checklist).
