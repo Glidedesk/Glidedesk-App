@@ -1,0 +1,134 @@
+# Every OS on its own machine (GitHub's free hosted runners): native clippy, all
+# tests, the real app build, and scripts/os-smoke.sh — a real server agent and
+# client agent over loopback, including client restarts while the server keeps
+# running. CI (ci.yml) only runs on Linux and cross-checks Windows; this runs
+# the code natively on Linux x64, Windows x64 and macOS ARM64.
+# Budget (private repo, PLAN §13.1): Linux 1×, Windows 2×, macOS 10× minutes, so
+# it runs on pushes to main that touch code, and by hand (Actions → OS matrix).
+name: OS matrix
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "docs/**", "graphify-out/**", "signing/**"]
+  workflow_dispatch:
+    inputs:
+      macos:
+        description: "Include macOS (uses ~10× minutes)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: os-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+
+jobs:
+  native:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Linux x64, os: ubuntu-24.04, exe: glidedesk, mac: false }
+          - { name: Windows x64, os: windows-2025, exe: glidedesk.exe, mac: false }
+          - { name: macOS ARM64, os: macos-15, exe: glidedesk, mac: true }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Skip macOS when not asked for
+        id: gate
+        run: |
+          if [ "${{ matrix.mac }}" = true ] && [ "${{ github.event_name }}" = workflow_dispatch ] && [ "${{ inputs.macos }}" != true ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.gate.outputs.skip != 'true'
+
+      - name: System packages (Linux)
+        if: steps.gate.outputs.skip != 'true' && runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev libxdo-dev xvfb x11-xserver-utils
+          # Keyboard/mouse injection through uinput, like a desktop user in group "input".
+          sudo chmod 666 /dev/uinput || true
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.gate.outputs.skip != 'true'
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.gate.outputs.skip != 'true'
+        with:
+          shared-key: os-matrix-${{ matrix.os }}
+
+      - uses: taiki-e/install-action@v2
+        if: steps.gate.outputs.skip != 'true'
+        with:
+          tool: cargo-nextest
+
+      - uses: pnpm/action-setup@v6
+        if: steps.gate.outputs.skip != 'true'
+        with:
+          version: 12
+      - uses: actions/setup-node@v7
+        if: steps.gate.outputs.skip != 'true'
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/ui/pnpm-lock.yaml
+
+      - name: Build UI (embedded into the app)
+        if: steps.gate.outputs.skip != 'true'
+        working-directory: app/ui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Clippy (native)
+        if: steps.gate.outputs.skip != 'true'
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Tests (native)
+        if: steps.gate.outputs.skip != 'true'
+        run: cargo nextest run --workspace --locked --no-fail-fast
+
+      - name: Build the app
+        if: steps.gate.outputs.skip != 'true'
+        run: cargo build -p glidedesk-app --locked
+
+      - name: Real agents — connect, client restarts, self-test
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          bin="target/debug/${{ matrix.exe }}"
+          if [ "$RUNNER_OS" = Linux ]; then
+            Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp >/dev/null 2>&1 &
+            sleep 1
+            export DISPLAY=:99
+          fi
+          set +e
+          bash scripts/os-smoke.sh "$bin"
+          code=$?
+          set -e
+          if [ "$code" = 2 ]; then
+            # No keyboard/mouse permission on this runner (macOS: Accessibility can't be granted on CI).
+            echo "::warning title=${{ matrix.name }}::agents could not get keyboard/mouse access on this runner; the smoke test was reported, not failed"
+            exit 0
+          fi
+          exit "$code"

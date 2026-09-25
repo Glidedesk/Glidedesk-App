@@ -5,7 +5,7 @@ RUN := docker/run.sh
 IMAGE := glidedesk-builder:latest
 CROSS_TARGETS := aarch64-apple-darwin x86_64-pc-windows-msvc
 
-.PHONY: help signing-keys docker-image sdk shell fmt lint test test-rust test-ui check-cross build-win build-mac build-linux release clean lab lab-stop
+.PHONY: help signing-keys docker-image sdk shell fmt lint test test-rust test-ui check-cross build-win build-mac build-linux release clean lab lab-stop os-smoke
 
 help:
 	@echo "make docker-image  build the builder image"
@@ -74,3 +74,11 @@ lab:
 
 lab-stop:
 	docker rm -f gd-lab
+
+# Real server + client agents over loopback (connect, client restarts, self-test) on a
+# virtual X screen — the same script the "OS matrix" workflow runs on Windows and macOS.
+os-smoke:
+	$(RUN) sh -c 'cd app/ui && pnpm install --frozen-lockfile >/dev/null && pnpm build >/dev/null && cd /src && cargo build -p glidedesk-app'
+	docker build -q -t glidedesk-lab -f docker/lab/Dockerfile docker/lab
+	docker run --rm -v "$(CURDIR):/src" -v gd-cache:/cache -w /src glidedesk-lab:latest \
+	  sh -c 'Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp >/dev/null 2>&1 & sleep 1; DISPLAY=:99 bash scripts/os-smoke.sh /cache/target/debug/glidedesk'
