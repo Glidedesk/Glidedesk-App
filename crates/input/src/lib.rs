@@ -11,6 +11,7 @@ pub mod hotkey;
 pub mod keymap;
 pub mod mock;
 pub mod modifiers;
+pub mod paste;
 pub mod remap;
 
 #[cfg(target_os = "linux")]
@@ -61,6 +62,11 @@ pub enum CaptureEvent {
     /// The OS stopped delivering events for a moment (macOS tap timeout) and
     /// capture was re-armed. Held keys may have been lost.
     Interrupted,
+    /// The local paste shortcut was held back because files are only offered
+    /// (§14.2). Fetch them, then call `CaptureControl::replay_paste(key)`.
+    PasteRequested {
+        key: KeyCode,
+    },
 }
 
 /// Control surface of a running capture thread.
@@ -77,6 +83,15 @@ pub trait CaptureControl: Send + Sync + Debug {
     }
     /// Stops the capture thread.
     fn stop(&self);
+    /// Hold this computer's paste shortcut while offered files wait (§14.2).
+    /// Backends that can't hold keys ignore it (files are then fetched at once).
+    fn set_paste_hold(&self, _on: bool) {}
+    /// Can this backend hold the paste shortcut?
+    fn holds_paste(&self) -> bool {
+        false
+    }
+    /// Performs the held paste now (the files are on the clipboard).
+    fn replay_paste(&self, _key: KeyCode) {}
 }
 
 pub struct Capture {

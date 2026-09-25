@@ -85,6 +85,7 @@ pub enum NoticeView {
     ServerConnected { name: String },
     Identify { label: String },
     Error { message: String },
+    Info { message: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

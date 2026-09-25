@@ -472,28 +472,66 @@ impl Runner {
         });
     }
 
-    fn receive_stream(
-        &self,
-        kind: u8,
-        stream: quinn::RecvStream,
-        settings: &ClientSettings,
-        taken: &mpsc::Sender<glidedesk_proto::FileSetId>,
-    ) {
+    fn receive_stream(&self, kind: u8, stream: quinn::RecvStream, conn: &quinn::Connection, settings: &ClientSettings) {
         let (allow_clip, allow_files) =
             (settings.clipboard && settings.clipboard_receive, settings.files && settings.clipboard_receive);
-        let (sync, taken, limit) = (self.sync.clone(), taken.clone(), settings.clipboard_limit);
+        let (sync, limit, conn) = (self.sync.clone(), settings.clipboard_limit, conn.clone());
         let peer = self.status.borrow().server_name.clone().unwrap_or_else(|| "server".into());
         tokio::spawn(async move {
-            match sync.receive(kind, stream, None, peer, allow_clip, allow_files, limit).await {
-                Ok(Some(files)) if files.cut => {
-                    if crate::sync::wait_taken(files.roots).await {
-                        let _ = taken.send(files.set).await;
-                    }
-                }
-                Ok(_) => {}
-                Err(e) => warn!(error = %e, "receiving clipboard failed"),
+            // Offered files wait for a paste here (see `on_input`).
+            if let Err(e) = sync.receive(kind, stream, conn, None, peer, allow_clip, allow_files, limit).await {
+                warn!(error = %e, "receiving clipboard failed");
             }
         });
+    }
+
+    /// Keys from the server pass through the paste guard: ⌘V / Ctrl+V while
+    /// files are only offered is held until they arrived (§14.2).
+    fn on_input(
+        &mut self,
+        ev: Input,
+        guard: &mut glidedesk_input::paste::PasteGuard,
+        taken: &mpsc::Sender<glidedesk_proto::FileSetId>,
+    ) -> bool {
+        use glidedesk_input::paste::Verdict;
+        let verdict = match ev {
+            Input::Key { key, down } => guard.on_key(key, down, self.sync.offer_pending()),
+            Input::ReleaseAll => {
+                guard.reset();
+                Verdict::Pass
+            }
+            _ => Verdict::Pass,
+        };
+        match verdict {
+            Verdict::Pass => self.inject.send(InjectCmd::Input(ev)).is_ok(),
+            Verdict::Swallow => true,
+            Verdict::Fetch => {
+                let Input::Key { key, .. } = ev else { return true };
+                let replay = guard.replay(key);
+                let (sync, inject, taken, notices) =
+                    (self.sync.clone(), self.inject.clone(), taken.clone(), self.notices.clone());
+                tokio::spawn(async move {
+                    match sync.fetch_offer().await {
+                        Ok(got) => {
+                            for (k, down) in replay {
+                                let _ = inject.send(InjectCmd::Input(Input::Key { key: k, down }));
+                            }
+                            if let Some(files) = got
+                                && files.cut
+                                && crate::sync::wait_taken(files.roots).await
+                            {
+                                let _ = taken.send(files.set).await;
+                            }
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "fetching offered files failed");
+                            let _ = notices.send(Notice::Error { message: format!("Paste failed: {e}") }).await;
+                        }
+                    }
+                });
+                true
+            }
+        }
     }
 
     #[allow(clippy::too_many_lines)]
@@ -583,8 +621,9 @@ impl Runner {
             if kind[0] == stream_kind::INPUT {
                 break FrameReader::new(s, MAX_INPUT_FRAME);
             }
-            self.receive_stream(kind[0], s, &settings, &taken_tx);
+            self.receive_stream(kind[0], s, &conn, &settings);
         };
+        let mut paste_guard = glidedesk_input::paste::PasteGuard::new(Platform::current());
         self.preferred = Some(welcome.device_id);
         self.last_sent = None;
         let server_name: String = welcome.name.chars().filter(|c| !c.is_control()).take(64).collect();
@@ -612,8 +651,26 @@ impl Runner {
                     Ok(mut s) => {
                         let mut kind = [0u8; 1];
                         if s.read_exact(&mut kind).await.is_ok() {
-                            self.receive_stream(kind[0], s, &settings, &taken_tx);
+                            self.receive_stream(kind[0], s, &conn, &settings);
                         }
+                    }
+                    Err(e) => return SessionEnd::Lost(e.to_string()),
+                },
+                bi = conn.accept_bi() => match bi {
+                    // The server pasted files this computer offered: send them.
+                    Ok((send, mut recv)) => {
+                        let (sync, peer) = (self.sync.clone(), server_name.clone());
+                        tokio::spawn(async move {
+                            let mut kind = [0u8; 1];
+                            let ok = tokio::time::timeout(Duration::from_secs(10), recv.read_exact(&mut kind))
+                                .await
+                                .is_ok_and(|r| r.is_ok());
+                            if ok && kind[0] == stream_kind::FETCH {
+                                sync.serve_fetch(send, recv, None, peer).await;
+                            } else {
+                                let _ = recv.stop(0u32.into());
+                            }
+                        });
                     }
                     Err(e) => return SessionEnd::Lost(e.to_string()),
                 },
@@ -628,7 +685,7 @@ impl Runner {
                 }
                 ev = input.recv::<Input>() => match ev {
                     Ok(Some(ev)) => {
-                        if self.inject.send(InjectCmd::Input(ev)).is_err() {
+                        if !self.on_input(ev, &mut paste_guard, &taken_tx) {
                             return SessionEnd::Lost("injection thread stopped".into());
                         }
                     }

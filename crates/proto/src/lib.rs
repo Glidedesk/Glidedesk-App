@@ -242,7 +242,32 @@ impl Default for ClientSettings {
 pub mod stream_kind {
     pub const INPUT: u8 = 0;
     pub const CLIPBOARD: u8 = 1;
+    /// Protocol 1 only (files pushed eagerly); refused since protocol 2.
     pub const FILES: u8 = 2;
+    /// Unidirectional: a [`super::FileOffer`] (names and sizes, no data).
+    pub const OFFER: u8 = 3;
+    /// Bidirectional, opened by the receiver when the user pastes: `u64 set id`
+    /// out, the file set (`glidedesk_transfer` wire format) back.
+    pub const FETCH: u8 = 4;
+}
+
+/// Files copied on one computer, offered to another when the cursor moves
+/// there (PLAN §14.2). Nothing is transferred until the user pastes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileOffer {
+    pub set: FileSetId,
+    /// Names of the copied items (at most [`FileOffer::MAX_NAMES`]).
+    pub names: Vec<String>,
+    /// Number of copied items (files and folders at the top level).
+    pub items: u32,
+    pub total_bytes: u64,
+    pub cut: bool,
+}
+
+impl FileOffer {
+    pub const MAX_NAMES: usize = 16;
+    /// Largest encoded offer accepted.
+    pub const MAX_BYTES: usize = 16 * 1024;
 }
 
 /// Hard cap for an in-memory clipboard payload (files are streamed separately).

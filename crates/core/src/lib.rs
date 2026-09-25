@@ -56,6 +56,14 @@ pub enum Notice {
     Identify {
         label: String,
     },
+    /// Something the user asked for failed (e.g. pasting offered files).
+    Error {
+        message: String,
+    },
+    /// Something the user should know that isn't an error.
+    Info {
+        message: String,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -339,6 +339,8 @@ impl Agent {
                 Some(NoticeView::ServerConnected { name })
             }
             Notice::Identify { label } => Some(NoticeView::Identify { label }),
+            Notice::Error { message } => Some(NoticeView::Error { message }),
+            Notice::Info { message } => Some(NoticeView::Info { message }),
         };
         if let Some(v) = view {
             let _ = self.events.send(Event::Notice(v));

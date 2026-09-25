@@ -12,6 +12,8 @@ pub enum ControlCall {
     Grab(bool),
     Warp(Point),
     Stop,
+    PasteHold(bool),
+    ReplayPaste(glidedesk_proto::KeyCode),
 }
 
 #[derive(Debug, Default)]
@@ -33,6 +35,15 @@ impl CaptureControl for MockControl {
     }
     fn stop(&self) {
         self.calls.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(ControlCall::Stop);
+    }
+    fn set_paste_hold(&self, on: bool) {
+        self.calls.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(ControlCall::PasteHold(on));
+    }
+    fn holds_paste(&self) -> bool {
+        true
+    }
+    fn replay_paste(&self, key: glidedesk_proto::KeyCode) {
+        self.calls.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(ControlCall::ReplayPaste(key));
     }
 }
 

@@ -267,7 +267,11 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
     let swallow = match key {
         Some(key) => {
             shared.emit(CaptureEvent::Key { key, down });
-            shared.gate.on_key(key, down, grabbed)
+            let out = shared.gate.on_key(key, down, grabbed);
+            if out.paste {
+                shared.emit(CaptureEvent::PasteRequested { key });
+            }
+            out.swallow
         }
         None => grabbed,
     };
@@ -395,6 +399,27 @@ impl CaptureControl for Control {
         // SAFETY: GetKeyState is always safe to call.
         let on = |vk: i32| unsafe { GetKeyState(vk) } & 1 == 1;
         LedState { caps: on(0x14), num: on(0x90), scroll: on(0x91) }
+    }
+
+    fn set_paste_hold(&self, on: bool) {
+        self.0.gate.set_paste_hold(on);
+    }
+
+    fn holds_paste(&self) -> bool {
+        true
+    }
+
+    fn replay_paste(&self, key: KeyCode) {
+        // Injected like a client would; our own tap/hook lets it through
+        // (the hold is already off, and Windows marks our events).
+        match crate::injector() {
+            Ok(mut inj) => {
+                for (k, down) in self.0.gate.replay(key) {
+                    let _ = inj.inject(&Input::Key { key: k, down });
+                }
+            }
+            Err(e) => warn!(error = %e, "could not replay the paste"),
+        }
     }
 
     fn stop(&self) {

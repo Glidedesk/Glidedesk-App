@@ -216,7 +216,8 @@ async fn clipboard_and_files_follow_the_cursor() {
 
     let server_clip = MockClipboard::default();
     let client_clip = MockClipboard::default();
-    let (capture, cap_tx, _ctl) = mock::capture();
+    let client_inj = MockInjector::default();
+    let (capture, cap_tx, cap_ctl) = mock::capture();
     let srv = server::start(
         server_config(),
         ServerDeps {
@@ -238,7 +239,7 @@ async fn clipboard_and_files_follow_the_cursor() {
     let cli = client::start(
         ccfg,
         ClientDeps {
-            injector: Box::new(MockInjector::default()),
+            injector: Box::new(client_inj.clone()),
             monitors: source(monitor(800, 600)),
             status: Arc::new(glidedesk_proto::ClientStatus::default),
             app_version: "test".into(),
@@ -282,8 +283,8 @@ async fn clipboard_and_files_follow_the_cursor() {
     cap_tx.send(CaptureEvent::Motion { pos: Point::new(999, 100), dx: -10, dy: 0 }).await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    // 4. Files: copy a folder on the server, enter the client, the client's clipboard
-    //    gets verified local copies.
+    // 4. Files (§14.2): copy a folder on the server and enter the client. Only an
+    //    offer arrives: the old clipboard is replaced, nothing is copied yet.
     let src = tempfile::tempdir().unwrap();
     let folder = src.path().join("Project");
     std::fs::create_dir_all(folder.join("assets")).unwrap();
@@ -291,11 +292,56 @@ async fn clipboard_and_files_follow_the_cursor() {
     std::fs::write(folder.join("notes.txt"), b"ship it").unwrap();
     server_clip.set_external(ClipData { files: vec![folder], ..Default::default() });
     cap_tx.send(CaptureEvent::Motion { pos: Point::new(999, 100), dx: 5, dy: 0 }).await.unwrap();
+    wait_clip(client_clip.clone(), "offer placeholder on client", |c| {
+        c.text.as_deref().is_some_and(|t| t.starts_with("Project from"))
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(client_clip.contents().files.is_empty(), "files must not copy by themselves");
+    assert!(srv.status.borrow().transfers.is_empty(), "no transfer before a paste");
+
+    //    The user pastes on the client (Ctrl+V on this test's OS): the V press is
+    //    held, the files arrive, then the paste is replayed.
+    let (ctrl, v) = (KeyCode(0xE0), KeyCode(0x19));
+    for (k, down) in [(ctrl, true), (v, true), (v, false)] {
+        cap_tx.send(CaptureEvent::Key { key: k, down }).await.unwrap();
+    }
     wait_clip(client_clip.clone(), "files on client", |c| !c.files.is_empty()).await;
     let got = client_clip.contents().files[0].clone();
     assert!(got.ends_with("Project"), "{got:?}");
     assert_eq!(std::fs::read(got.join("notes.txt")).unwrap(), b"ship it");
     assert_eq!(std::fs::read(got.join("assets/logo.bin")).unwrap().len(), 700_000);
+    wait_injected(&client_inj, "paste replayed after the files", |e| {
+        let at = e.iter().position(|i| *i == Input::Key { key: v, down: true });
+        at.is_some_and(|i| e[i + 1..].contains(&Input::Key { key: v, down: false }))
+    })
+    .await;
+    cap_tx.send(CaptureEvent::Key { key: ctrl, down: false }).await.unwrap();
+
+    // 5. Client → server: the server holds its own paste shortcut while offered
+    //    files wait, fetches them on paste and replays it.
+    let doc = src.path().join("report.pdf");
+    std::fs::write(&doc, vec![7u8; 4096]).unwrap();
+    client_clip.set_external(ClipData { files: vec![doc], ..Default::default() });
+    cap_tx.send(CaptureEvent::Motion { pos: Point::new(999, 100), dx: -10, dy: 0 }).await.unwrap();
+    wait_clip(server_clip.clone(), "offer on server", |c| c.text.as_deref().is_some_and(|t| t.starts_with("report.pdf"))).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !cap_ctl.calls.lock().unwrap().contains(&ControlCall::PasteHold(true)) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("paste hold on");
+    cap_tx.send(CaptureEvent::PasteRequested { key: v }).await.unwrap();
+    wait_clip(server_clip.clone(), "files on server", |c| !c.files.is_empty()).await;
+    assert_eq!(std::fs::read(&server_clip.contents().files[0]).unwrap().len(), 4096);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !cap_ctl.calls.lock().unwrap().contains(&ControlCall::ReplayPaste(v)) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("paste replayed on server");
 
     cli.commands.send(glidedesk_core::ClientCommand::Shutdown(GoodbyeReason::Quitting)).await.unwrap();
     srv.commands.send(ServerCommand::Shutdown(GoodbyeReason::Stopping)).await.unwrap();
@@ -355,7 +401,8 @@ async fn password_protects_the_server() {
     let mut wrong = ccfg.clone();
     wrong.client.password = "nope-nope".into();
     none.commands.send(glidedesk_core::ClientCommand::ApplyConfig(Box::new(wrong))).await.unwrap();
-    let v = wait_for(&mut st, "wrong password", |v| v.message.as_deref().is_some_and(|m| m.contains("wrong password"))).await;
+    let v = wait_for(&mut st, "wrong password", |v| v.message.as_deref().is_some_and(|m| m.contains("wrong password")))
+        .await;
     assert_eq!(v.state, LinkState::Rejected);
     assert!(srv_status.borrow().clients.is_empty());
 

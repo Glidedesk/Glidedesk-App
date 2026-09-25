@@ -4,7 +4,13 @@
 //!
 //! Stream formats (after the 1-byte kind):
 //! * clipboard: `u32 len + postcard ClipHeader`, then every part's bytes.
-//! * files: `u64 set id`, then `glidedesk_transfer::send_set` data.
+//! * offer (uni): `u32 len + postcard FileOffer` — copied files, no data (§14.2).
+//! * fetch (bi, opened by the receiver on paste): `u64 set id` out,
+//!   `glidedesk_transfer::send_set` data back.
+//!
+//! Files never move by themselves: the receiver's paste shortcut is held,
+//! the set is fetched into staging, put on the clipboard, and the paste is
+//! replayed so the file manager copies it.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -13,8 +19,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use glidedesk_clipboard::{ClipData, Clipboard};
-use glidedesk_proto::{ClipFormat, ClipHeader, DeviceId, FileSetId, MAX_CLIPBOARD_BYTES, stream_kind};
+use glidedesk_proto::{ClipFormat, ClipHeader, DeviceId, FileOffer, FileSetId, MAX_CLIPBOARD_BYTES, stream_kind};
 use glidedesk_transfer::{Manifest, Staging, build_manifest, receive_set, send_set};
+use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
 use crate::transfers::Transfers;
@@ -34,6 +41,40 @@ pub struct ReceivedFiles {
     pub set: FileSetId,
     pub cut: bool,
     pub roots: Vec<PathBuf>,
+    /// Who offered them (`None` = the server).
+    pub origin: Option<DeviceId>,
+}
+
+/// Result of handling one incoming stream.
+#[derive(Debug)]
+pub enum Received {
+    Nothing,
+    /// Files were offered and wait for a paste here.
+    Offer,
+}
+
+/// How many recent offers we keep ready to be fetched.
+const MAX_OFFERS: usize = 8;
+const OFFER_TTL: Duration = Duration::from_secs(3600);
+
+/// Files we offered: who may fetch them, and what exactly.
+struct Offered {
+    set: u64,
+    target: Option<DeviceId>,
+    files: Vec<PathBuf>,
+    manifest: Manifest,
+    at: std::time::Instant,
+}
+
+/// An offer made to us, waiting for a paste.
+struct Pending {
+    offer: FileOffer,
+    conn: quinn::Connection,
+    origin: Option<DeviceId>,
+    peer: String,
+    /// Our clipboard sequence right after writing the placeholder: if it
+    /// changes, the user copied something else and the offer is stale.
+    placeholder: u64,
 }
 
 pub struct Sync {
@@ -46,6 +87,10 @@ pub struct Sync {
     /// recipient reports it moved them. Only the recipient can release a set.
     cuts: Mutex<HashMap<u64, CutSet>>,
     next_set: AtomicU64,
+    offers: Mutex<Vec<Offered>>,
+    pending: Mutex<Option<Pending>>,
+    /// `true` while an offer waits here (the capture holds the paste shortcut).
+    hold: watch::Sender<bool>,
 }
 
 impl std::fmt::Debug for Sync {
@@ -83,7 +128,24 @@ impl Sync {
             transfers: Arc::new(Transfers::default()),
             cuts: Mutex::new(HashMap::new()),
             next_set: AtomicU64::new(seed),
+            offers: Mutex::new(Vec::new()),
+            pending: Mutex::new(None),
+            hold: watch::channel(false).0,
         })
+    }
+
+    /// Follows "an offer waits for a paste here".
+    #[must_use]
+    pub fn hold_watch(&self) -> watch::Receiver<bool> {
+        self.hold.subscribe()
+    }
+
+    /// Files were offered to this computer and the clipboard still shows them.
+    #[must_use]
+    pub fn offer_pending(&self) -> bool {
+        let Some(clip) = &self.clip else { return false };
+        let placeholder = lock(&self.pending).as_ref().map(|p| p.placeholder);
+        placeholder.is_some_and(|seq| lock(clip).sequence() == seq)
     }
 
     #[must_use]
@@ -119,6 +181,15 @@ impl Sync {
         limit: u64,
     ) -> Result<(), String> {
         let Some(clip) = self.clip.clone() else { return Ok(()) };
+        if self.offer_pending() {
+            // Our clipboard only shows files offered by another computer and
+            // the cursor moves on to a third one: fetch them here first, so
+            // they can be offered onwards.
+            if !allow_files {
+                return Ok(());
+            }
+            self.clone().fetch_offer().await?;
+        }
         let cap = if limit == 0 { MAX_CLIPBOARD_BYTES } else { limit.min(MAX_CLIPBOARD_BYTES) };
         let data = tokio::task::spawn_blocking(move || lock(&clip).read(cap))
             .await
@@ -126,7 +197,7 @@ impl Sync {
             .map_err(|e| e.to_string())?;
         if !data.files.is_empty() {
             if allow_files {
-                return self.send_files(conn, target, peer, data.files, data.cut).await;
+                return self.offer(conn, target, data.files, data.cut).await;
             }
             return Ok(());
         }
@@ -173,11 +244,11 @@ impl Sync {
         res
     }
 
-    async fn send_files(
+    /// Offers copied files to `target`: names and sizes only (§14.2).
+    async fn offer(
         self: Arc<Self>,
         conn: quinn::Connection,
         target: Option<DeviceId>,
-        peer: String,
         files: Vec<PathBuf>,
         cut: bool,
     ) -> Result<(), String> {
@@ -187,82 +258,182 @@ impl Sync {
             .map_err(|e| e.to_string())?
             .map_err(|e| e.to_string())?;
         let set = random_id();
+        let roots = manifest.roots();
+        let offer = FileOffer {
+            set: FileSetId(set),
+            names: roots.iter().take(FileOffer::MAX_NAMES).cloned().collect(),
+            items: u32::try_from(roots.len()).unwrap_or(u32::MAX),
+            total_bytes: manifest.total_bytes,
+            cut,
+        };
         if cut {
             lock(&self.cuts).insert(set, (target, files.clone(), manifest.clone()));
         }
+        {
+            let mut offers = lock(&self.offers);
+            offers.retain(|o| o.at.elapsed() < OFFER_TTL && o.target != target);
+            if offers.len() >= MAX_OFFERS {
+                offers.remove(0);
+            }
+            offers.push(Offered { set, target, files, manifest, at: std::time::Instant::now() });
+        }
+        let body = postcard::to_stdvec(&offer).map_err(|e| e.to_string())?;
+        let mut s = conn.open_uni().await.map_err(|e| e.to_string())?;
+        s.write_all(&[stream_kind::OFFER]).await.map_err(|e| e.to_string())?;
+        s.write_all(&u32::try_from(body.len()).unwrap_or(0).to_le_bytes()).await.map_err(|e| e.to_string())?;
+        s.write_all(&body).await.map_err(|e| e.to_string())?;
+        s.finish().map_err(|e| e.to_string())?;
+        info!(items = offer.items, bytes = offer.total_bytes, "files offered");
+        Ok(())
+    }
+
+    /// Serves a fetch the peer opened after the user pasted there (kind byte
+    /// already read). Only a set offered *to that peer* is sent.
+    pub async fn serve_fetch(
+        self: Arc<Self>,
+        mut send: quinn::SendStream,
+        mut recv: quinn::RecvStream,
+        from: Option<DeviceId>,
+        peer: String,
+    ) {
+        let mut id = [0u8; 8];
+        if tokio::time::timeout(Duration::from_secs(10), recv.read_exact(&mut id)).await.map_or(true, |r| r.is_err()) {
+            let _ = send.reset(0u32.into());
+            return;
+        }
+        let set = u64::from_le_bytes(id);
+        let found = {
+            let mut offers = lock(&self.offers);
+            offers.retain(|o| o.at.elapsed() < OFFER_TTL);
+            offers.iter().find(|o| o.set == set && o.target == from).map(|o| (o.files.clone(), o.manifest.clone()))
+        };
+        let Some((files, manifest)) = found else {
+            warn!(set, "fetch for files that were not offered to that computer");
+            let _ = send.reset(0u32.into());
+            return;
+        };
         let (tid, progress) = self.transfers.start(&peer, true, describe(&manifest));
         let res = async {
-            let mut s = conn.open_uni().await.map_err(|e| e.to_string())?;
-            s.write_all(&[stream_kind::FILES]).await.map_err(|e| e.to_string())?;
-            s.write_all(&set.to_le_bytes()).await.map_err(|e| e.to_string())?;
-            send_set(&mut s, &files, &manifest, &progress).await.map_err(|e| e.to_string())?;
-            s.finish().map_err(|e| e.to_string())?;
+            send_set(&mut send, &files, &manifest, &progress).await.map_err(|e| e.to_string())?;
+            send.finish().map_err(|e| e.to_string())?;
             Ok::<(), String>(())
         }
         .await;
-        if res.is_err() {
-            lock(&self.cuts).remove(&set);
-        }
-        info!(bytes = manifest.total_bytes, ok = res.is_ok(), "files sent");
-        self.transfers.finish(tid, res.clone());
-        res
+        info!(bytes = manifest.total_bytes, ok = res.is_ok(), "offered files sent");
+        self.transfers.finish(tid, res);
     }
 
-    /// Handles one incoming clipboard/files stream (kind byte already read).
+    /// Fetches the offered files into staging and puts them on the clipboard.
+    /// `Ok(None)`: nothing (or nothing current) was offered.
+    pub async fn fetch_offer(self: Arc<Self>) -> Result<Option<ReceivedFiles>, String> {
+        let Some(clip) = self.clip.clone() else { return Ok(None) };
+        let pending = lock(&self.pending).take();
+        self.hold.send_replace(false);
+        let Some(p) = pending else { return Ok(None) };
+        if lock(&clip).sequence() != p.placeholder {
+            return Ok(None); // the user copied something else since
+        }
+        let staging = self.staging.clone().ok_or("no staging folder")?;
+        if let Some(free) = staging.free_space()
+            && free < p.offer.total_bytes.saturating_add(64 << 20)
+        {
+            return Err(format!(
+                "not enough free disk space for {} ({} free)",
+                human(p.offer.total_bytes),
+                human(free)
+            ));
+        }
+        let name = describe_names(&p.offer.names, p.offer.items);
+        let (tid, progress) = self.transfers.start(&p.peer, false, name.clone());
+        progress.total.store(p.offer.total_bytes, Ordering::Relaxed);
+        let dir = staging.new_set(self.next_set.fetch_add(1, Ordering::Relaxed)).map_err(|e| e.to_string())?;
+        let res = async {
+            let (mut send, mut recv) = p.conn.open_bi().await.map_err(|e| e.to_string())?;
+            send.write_all(&[stream_kind::FETCH]).await.map_err(|e| e.to_string())?;
+            send.write_all(&p.offer.set.0.to_le_bytes()).await.map_err(|e| e.to_string())?;
+            let _ = send.finish();
+            // The sender may not send more than it offered.
+            let manifest =
+                receive_set(&mut recv, &dir, p.offer.total_bytes, progress.clone()).await.map_err(|e| match e {
+                    glidedesk_transfer::TransferError::Net(_) => {
+                        format!("{name} is no longer available on {}", p.peer)
+                    }
+                    other => other.to_string(),
+                })?;
+            Ok::<Manifest, String>(manifest)
+        }
+        .await;
+        let manifest = match res {
+            Ok(m) => m,
+            Err(e) => {
+                staging.discard(&dir);
+                self.transfers.finish(tid, Err(e.clone()));
+                return Err(e);
+            }
+        };
+        if lock(&clip).sequence() != p.placeholder {
+            staging.discard(&dir);
+            self.transfers.finish(tid, Err("cancelled: something else was copied".into()));
+            return Ok(None);
+        }
+        let roots = glidedesk_transfer::staging::roots_in(&dir, &manifest.roots());
+        let cut = p.offer.cut;
+        let data = ClipData { files: roots.clone(), cut, ..ClipData::default() };
+        self.write_local(&clip, data, p.origin).await?;
+        self.transfers.finish(tid, Ok(()));
+        info!(bytes = manifest.total_bytes, "offered files received");
+        Ok(Some(ReceivedFiles { set: p.offer.set, cut, roots, origin: p.origin }))
+    }
+
+    /// Handles one incoming clipboard/offer stream (kind byte already read).
+    /// `conn` is the link it came on (used to fetch offered files later).
     #[allow(clippy::too_many_arguments)]
     pub async fn receive(
         self: Arc<Self>,
         kind: u8,
         mut stream: quinn::RecvStream,
+        conn: quinn::Connection,
         origin: Option<DeviceId>,
         peer: String,
         allow_clip: bool,
         allow_files: bool,
         limit: u64,
-    ) -> Result<Option<ReceivedFiles>, String> {
+    ) -> Result<Received, String> {
         let Some(clip) = self.clip.clone() else {
             let _ = stream.stop(0u32.into());
-            return Ok(None);
+            return Ok(Received::Nothing);
         };
         match kind {
             stream_kind::CLIPBOARD if allow_clip => {
                 let data = read_clip(&mut stream, limit).await?;
                 self.write_local(&clip, data, origin).await?;
-                Ok(None)
+                self.drop_pending();
+                Ok(Received::Nothing)
             }
-            stream_kind::FILES if allow_files => {
-                let Some(staging) = self.staging.clone() else { return Err("no staging folder".into()) };
-                let mut id = [0u8; 8];
-                stream.read_exact(&mut id).await.map_err(|e| e.to_string())?;
-                let set = FileSetId(u64::from_le_bytes(id));
-                let dir = staging.new_set(self.next_set.fetch_add(1, Ordering::Relaxed)).map_err(|e| e.to_string())?;
-                let (tid, progress) = self.transfers.start(&peer, false, "Files".into());
-                let res = receive_set(&mut stream, &dir, 0, progress).await;
-                match res {
-                    Ok(manifest) => {
-                        let roots = glidedesk_transfer::staging::roots_in(&dir, &manifest.roots());
-                        let data = ClipData { files: roots.clone(), cut: manifest.cut, ..ClipData::default() };
-                        self.write_local(&clip, data, origin).await?;
-                        self.transfers.finish(tid, Ok(()));
-                        info!(bytes = manifest.total_bytes, "files received");
-                        Ok(Some(ReceivedFiles { set, cut: manifest.cut, roots }))
-                    }
-                    Err(e) => {
-                        staging.discard(&dir);
-                        self.transfers.finish(tid, Err(e.to_string()));
-                        Err(e.to_string())
-                    }
-                }
+            stream_kind::OFFER if allow_files => {
+                let offer = read_offer(&mut stream).await?;
+                let text = format!(
+                    "{} from {peer} — paste with the keyboard shortcut to copy {} here",
+                    describe_names(&offer.names, offer.items),
+                    if offer.items == 1 { "it" } else { "them" }
+                );
+                // Replace the old clipboard at once, so a paste never brings back stale files.
+                let placeholder =
+                    self.write_local(&clip, ClipData { text: Some(text), ..ClipData::default() }, origin).await?;
+                *lock(&self.pending) = Some(Pending { offer, conn, origin, peer, placeholder });
+                self.hold.send_replace(true);
+                Ok(Received::Offer)
             }
             _ => {
                 // Not allowed or unknown: refuse without reading.
                 let _ = stream.stop(0u32.into());
-                Ok(None)
+                Ok(Received::Nothing)
             }
         }
     }
 
-    async fn write_local(&self, clip: &SharedClip, data: ClipData, origin: Option<DeviceId>) -> Result<(), String> {
+    /// Writes our clipboard; returns its new sequence number.
+    async fn write_local(&self, clip: &SharedClip, data: ClipData, origin: Option<DeviceId>) -> Result<u64, String> {
         let clip = clip.clone();
         let seq = tokio::task::spawn_blocking(move || {
             let mut c = lock(&clip);
@@ -272,7 +443,14 @@ impl Sync {
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
         *lock(&self.written) = Some((seq, origin));
-        Ok(())
+        Ok(seq)
+    }
+
+    /// A newer clipboard arrived: forget an older file offer.
+    fn drop_pending(&self) {
+        if lock(&self.pending).take().is_some() {
+            self.hold.send_replace(false);
+        }
     }
 
     /// The receiver moved our cut files: move the originals to the Trash,
@@ -308,6 +486,43 @@ impl Sync {
             Err(e) => warn!(error = %e, "cut task failed"),
         }
     }
+}
+
+/// "report.pdf", "report.pdf and 2 more".
+fn describe_names(names: &[String], items: u32) -> String {
+    match names.first() {
+        None => "Files".into(),
+        Some(first) if items <= 1 => first.clone(),
+        Some(first) => format!("{first} and {} more", items - 1),
+    }
+}
+
+fn human(bytes: u64) -> String {
+    #[allow(clippy::cast_precision_loss)]
+    let b = bytes as f64;
+    match bytes {
+        0..1_000_000 => format!("{:.0} KB", b / 1e3),
+        1_000_000..1_000_000_000 => format!("{:.1} MB", b / 1e6),
+        _ => format!("{:.2} GB", b / 1e9),
+    }
+}
+
+/// Reads and sanitises an offer (untrusted peer data).
+async fn read_offer(stream: &mut quinn::RecvStream) -> Result<FileOffer, String> {
+    let mut len = [0u8; 4];
+    stream.read_exact(&mut len).await.map_err(|e| e.to_string())?;
+    let len = u32::from_le_bytes(len) as usize;
+    if len > FileOffer::MAX_BYTES {
+        return Err("file offer too large".into());
+    }
+    let mut body = vec![0u8; len];
+    stream.read_exact(&mut body).await.map_err(|e| e.to_string())?;
+    let mut offer: FileOffer = postcard::from_bytes(&body).map_err(|_| "bad file offer".to_owned())?;
+    offer.names.truncate(FileOffer::MAX_NAMES);
+    for n in &mut offer.names {
+        *n = n.chars().filter(|c| !c.is_control()).take(255).collect();
+    }
+    Ok(offer)
 }
 
 /// Unguessable 64-bit id (file-set ids must not be predictable by other peers).

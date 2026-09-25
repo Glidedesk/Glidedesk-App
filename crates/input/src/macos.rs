@@ -303,6 +303,27 @@ impl CaptureControl for Control {
         LedState { caps: flags.contains(CGEventFlags::MaskAlphaShift), num: false, scroll: false }
     }
 
+    fn set_paste_hold(&self, on: bool) {
+        self.0.gate.set_paste_hold(on);
+    }
+
+    fn holds_paste(&self) -> bool {
+        true
+    }
+
+    fn replay_paste(&self, key: KeyCode) {
+        // Injected like a client would; our own tap/hook lets it through
+        // (the hold is already off, and Windows marks our events).
+        match crate::injector() {
+            Ok(mut inj) => {
+                for (k, down) in self.0.gate.replay(key) {
+                    let _ = inj.inject(&Input::Key { key: k, down });
+                }
+            }
+            Err(e) => warn!(error = %e, "could not replay the paste"),
+        }
+    }
+
     fn stop(&self) {
         self.set_grab(false);
         self.0.stopped.store(true, Ordering::SeqCst);
@@ -426,7 +447,11 @@ unsafe extern "C-unwind" fn tap_callback(
             let grabbed = shared.grabbed.load(Ordering::Relaxed);
             if let Some(key) = keymap::mac_to_hid(code) {
                 shared.emit(CaptureEvent::Key { key, down });
-                return if shared.gate.on_key(key, down, grabbed) { std::ptr::null_mut() } else { pass };
+                let out = shared.gate.on_key(key, down, grabbed);
+                if out.paste {
+                    shared.emit(CaptureEvent::PasteRequested { key });
+                }
+                return if out.swallow { std::ptr::null_mut() } else { pass };
             }
         }
         CGEventType::FlagsChanged => {
@@ -441,7 +466,7 @@ unsafe extern "C-unwind" fn tap_callback(
                 let down = flags & bit != 0;
                 shared.emit(CaptureEvent::Key { key, down });
                 let grabbed = shared.grabbed.load(Ordering::Relaxed);
-                return if shared.gate.on_key(key, down, grabbed) { std::ptr::null_mut() } else { pass };
+                return if shared.gate.on_key(key, down, grabbed).swallow { std::ptr::null_mut() } else { pass };
             }
         }
         // Trackpad gestures, Force Touch pressure and tablet events must not act on

@@ -148,6 +148,7 @@ fn on_notice(app: &AppHandle, n: &NoticeView) {
             ("Connected".to_owned(), format!("This computer is now controlled by {name}."))
         }
         NoticeView::Error { message } => ("Glidedesk problem".to_owned(), message.clone()),
+        NoticeView::Info { message } => ("Glidedesk".to_owned(), message.clone()),
     };
     let _ = app.emit("agent-notice", n);
     if crate::notifications_enabled(app) {

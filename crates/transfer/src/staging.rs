@@ -47,6 +47,14 @@ impl Staging {
         Ok(dir)
     }
 
+    /// Free bytes on the disk that holds the staging folder (`None` if unknown).
+    #[must_use]
+    pub fn free_space(&self) -> Option<u64> {
+        // The folder may not exist yet: ask for its nearest existing parent.
+        let probe = self.root.ancestors().find(|p| p.exists())?;
+        fs4::available_space(probe).ok()
+    }
+
     /// Removes a set (after an error or when it is no longer needed).
     pub fn discard(&self, dir: &Path) {
         if dir.starts_with(&self.root) {

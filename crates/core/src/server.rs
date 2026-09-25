@@ -329,6 +329,7 @@ impl Hub {
         let mut heartbeat = tokio::time::interval(health_cfg(&self.config).interval);
         heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut transfer_tick = tokio::time::interval(Duration::from_millis(500));
+        let mut paste_hold = self.sync.hold_watch();
         let mut monitor_poll = tokio::time::interval(MONITOR_POLL);
         monitor_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         self.publish();
@@ -361,6 +362,10 @@ impl Hub {
                     self.check_secure_input();
                 }
                 _ = transfer_tick.tick(), if self.sync.transfers.any_active() => self.publish(),
+                Ok(()) = paste_hold.changed() => {
+                    let on = *paste_hold.borrow_and_update();
+                    self.capture.set_paste_hold(on);
+                }
                 () = sleep_until(deadline) => {
                     let out = self.engine.poll(Instant::now());
                     self.apply(out, 0, 0);
@@ -444,6 +449,7 @@ impl Hub {
                 }
             }
             CaptureEvent::Key { key, down } => self.on_key(key, down),
+            CaptureEvent::PasteRequested { key } => self.paste_offered_files(Some(key)),
             CaptureEvent::DisplaysChanged => self.poll_monitors(),
             CaptureEvent::Interrupted => {
                 // Events may have been lost: make sure nothing stays pressed remotely.
@@ -731,6 +737,7 @@ impl Hub {
         spawn_input_writer(conn.clone(), input_rx, id, generation, self.event_tx.clone());
         spawn_reader(reader, id, generation, self.event_tx.clone());
         spawn_uni_acceptor(conn.clone(), id, generation, self.event_tx.clone());
+        spawn_fetch_server(conn.clone(), id, name.clone(), self.sync.clone());
         self.last_sent.remove(&id);
 
         let hcfg = health_cfg(&self.config);
@@ -1077,24 +1084,39 @@ impl Hub {
         });
     }
 
-    /// A client sent its clipboard or files (when the cursor came back).
+    /// A client sent its clipboard or offered files (when the cursor came back).
     fn on_stream(&mut self, id: DeviceId, kind: u8, stream: quinn::RecvStream) {
         let s = self.settings_for(id);
         let sync = self.sync.clone();
         let name = self.name_of(id);
-        let events = self.event_tx.clone();
+        let Some(conn) = self.slots.get(&id).and_then(|s| s.conn.as_ref()).map(|c| c.connection.clone()) else {
+            return;
+        };
         let (allow_clip, allow_files) = (s.clipboard && s.clipboard_send, s.files && s.clipboard_send);
+        let holds = self.capture.holds_paste();
+        let (events, notices, capture) = (self.event_tx.clone(), self.notice_tx.clone(), self.capture.clone());
         tokio::spawn(async move {
-            match sync.receive(kind, stream, Some(id), name, allow_clip, allow_files, s.clipboard_limit).await {
-                Ok(Some(files)) if files.cut => {
-                    if crate::sync::wait_taken(files.roots).await {
-                        let _ = events.send(HubEvent::Taken { id, set: files.set }).await;
-                    }
+            match sync
+                .clone()
+                .receive(kind, stream, conn, Some(id), name, allow_clip, allow_files, s.clipboard_limit)
+                .await
+            {
+                // This capture can't hold the paste shortcut (Linux X11): fetch right away.
+                Ok(crate::sync::Received::Offer) if !holds => {
+                    fetch_and_paste(sync, None, capture, events, notices).await;
                 }
                 Ok(_) => {}
                 Err(e) => warn!(error = %e, "receiving clipboard failed"),
             }
         });
+    }
+
+    /// The user pasted on this computer while files are only offered: fetch
+    /// them, then replay the paste (`key`) so the file manager copies them.
+    fn paste_offered_files(&mut self, key: Option<KeyCode>) {
+        let (sync, capture) = (self.sync.clone(), self.capture.clone());
+        let (events, notices) = (self.event_tx.clone(), self.notice_tx.clone());
+        tokio::spawn(fetch_and_paste(sync, key, capture, events, notices));
     }
 
     /// Zero-config placement: put a new client on a free side of the server.
@@ -1240,6 +1262,52 @@ impl Hub {
 // ---------------------------------------------------------------------------
 // connection tasks
 // ---------------------------------------------------------------------------
+
+/// Fetches offered files (§14.2); on success replays the held paste and, for
+/// cut files, reports the move to their origin once they left staging.
+async fn fetch_and_paste(
+    sync: Arc<crate::sync::Sync>,
+    key: Option<KeyCode>,
+    capture: Arc<dyn CaptureControl>,
+    events: mpsc::Sender<HubEvent>,
+    notices: mpsc::Sender<Notice>,
+) {
+    match sync.fetch_offer().await {
+        Ok(got) => {
+            if let Some(k) = key {
+                capture.replay_paste(k);
+            }
+            if let Some(files) = got
+                && files.cut
+                && let Some(id) = files.origin
+                && crate::sync::wait_taken(files.roots).await
+            {
+                let _ = events.send(HubEvent::Taken { id, set: files.set }).await;
+            }
+        }
+        Err(e) => {
+            warn!(error = %e, "fetching offered files failed");
+            let _ = notices.send(Notice::Error { message: format!("Paste failed: {e}") }).await;
+        }
+    }
+}
+
+/// Answers fetches: the client pasted files this computer offered.
+fn spawn_fetch_server(conn: quinn::Connection, id: DeviceId, name: String, sync: Arc<crate::sync::Sync>) {
+    tokio::spawn(async move {
+        while let Ok((send, mut recv)) = conn.accept_bi().await {
+            let mut kind = [0u8; 1];
+            let ok = tokio::time::timeout(Duration::from_secs(10), recv.read_exact(&mut kind))
+                .await
+                .is_ok_and(|r| r.is_ok());
+            if ok && kind[0] == glidedesk_proto::stream_kind::FETCH {
+                tokio::spawn(sync.clone().serve_fetch(send, recv, Some(id), name.clone()));
+            } else {
+                let _ = recv.stop(0u32.into());
+            }
+        }
+    });
+}
 
 type Handshake = (quinn::Connection, FrameWriter, FrameReader, Hello, Option<Vec<u8>>);
 
