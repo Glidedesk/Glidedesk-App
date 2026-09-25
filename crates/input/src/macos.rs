@@ -1037,6 +1037,19 @@ mod tests {
         std::env::var_os("GLIDEDESK_TAP_TESTS").is_some()
     }
 
+    /// One test, run in order: the checks post real events, and a grabbed tap
+    /// of a check running in parallel (tests are separate processes) would
+    /// swallow another check's events.
+    #[test]
+    fn real_event_taps() {
+        if !enabled() {
+            return;
+        }
+        the_session_tap_only_runs_while_a_client_has_control();
+        shortcuts_posted_by_mouse_software_go_to_the_client_while_grabbed();
+        media_keys_go_to_the_client_while_grabbed();
+    }
+
     /// Posts a key the way mouse utilities (Logi Options+, `SteerMouse`, …) do for
     /// buttons set to a shortcut: at the session level, past the HID tap.
     fn post_key(code: u16, down: bool, flags: CGEventFlags) {
@@ -1057,11 +1070,7 @@ mod tests {
         false
     }
 
-    #[test]
     fn the_session_tap_only_runs_while_a_client_has_control() {
-        if !enabled() {
-            return;
-        }
         let (shared, _events) = start_taps().expect("event taps (Accessibility)");
         let control = Control(shared.clone());
         let tap = &shared.session_tap.get().expect("session tap").0;
@@ -1073,11 +1082,7 @@ mod tests {
         control.stop();
     }
 
-    #[test]
     fn shortcuts_posted_by_mouse_software_go_to_the_client_while_grabbed() {
-        if !enabled() {
-            return;
-        }
         let mut cap = start_capture().expect("event tap (Accessibility)");
         cap.control.set_grab(true);
         std::thread::sleep(Duration::from_millis(200));
@@ -1110,11 +1115,7 @@ mod tests {
         CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&ev));
     }
 
-    #[test]
     fn media_keys_go_to_the_client_while_grabbed() {
-        if !enabled() {
-            return;
-        }
         let mut cap = start_capture().expect("event tap (Accessibility)");
         cap.control.set_grab(true);
         std::thread::sleep(Duration::from_millis(200));
