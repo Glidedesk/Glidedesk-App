@@ -26,6 +26,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 use crate::keymap::{self, hid};
+use crate::pin::{self, Warp};
 use crate::{CAPTURE_QUEUE, Capture, CaptureControl, CaptureEvent, Injector, InputError, Permissions, Pressed};
 
 /// Wheel units (1/120 notch) per pixel of continuous (trackpad) scrolling.
@@ -115,14 +116,6 @@ fn repin(p: Point) {
     let _ = CGAssociateMouseAndMouseCursorPosition(false);
 }
 
-/// The hidden cursor is pulled back to the pin only when it comes this close
-/// (points) to an edge of the pinned screen: every pull costs a warp, so it
-/// should be rare — just enough that the cursor never reaches an edge and stops
-/// producing motion.
-const REPIN_MARGIN: i32 = 120;
-
-/// Largest motion (points) accepted from one event; see the motion handler.
-const MAX_STEP: i32 = 250;
 
 /// Turns off the pause (default 0.25 s) macOS inserts after a cursor warp, during
 /// which it drops real mouse input — felt as stutter while another computer has
@@ -256,15 +249,10 @@ struct Shared {
     run_loop: OnceLock<SendRunLoop>,
     tap: OnceLock<SendPort>,
     pin: Mutex<Point>,
-    /// Where we last warped the cursor. The next motion event's delta fields
-    /// include the warp jump itself (seen as a huge move back across the edge,
-    /// which bounced the cursor straight home); that one event's movement is
-    /// measured from this point instead.
-    warped: Mutex<Option<Point>>,
-    /// Screen the cursor is pinned to while grabbed.
-    pin_rect: Mutex<Rect>,
-    /// When the hidden cursor was last pulled back to the pin.
-    last_repin: Mutex<Option<Instant>>,
+    /// Our last warp, until its first motion event is seen: that event's delta
+    /// fields include the jump itself, so it is measured from the warp target
+    /// instead (see `crate::pin`).
+    warped: Mutex<Option<Warp>>,
     /// Device-dependent modifier bits last seen (to derive up/down).
     last_flags: Mutex<u64>,
     gate: crate::gate::KeyGate,
@@ -299,17 +287,17 @@ impl CaptureControl for Control {
             // Park the hidden cursor in the middle of the main screen. macOS keeps
             // moving the real cursor under an event tap (and "disconnect mouse from
             // cursor" only applies to the foreground app), so it is pulled back
-            // here whenever it drifts (see `repin`). Parked at the edge it used to
+            // here as soon as it drifts a little (see `crate::pin`). Parked at the edge it used to
             // hit the screen border, stop producing motion, and the pointer on the
             // other computer got stuck before it could come back (§14 B5/B7).
             let centre = to_rect(CGDisplayBounds(CGMainDisplayID()));
             let pin = Point::new(centre.x + centre.w / 2, centre.y + centre.h / 2);
             *lock(&self.0.pin) = pin;
-            *lock(&self.0.pin_rect) = centre;
             disable_warp_suppression();
             allow_background_cursor_hiding();
+            let from = cursor_pos().unwrap_or(pin);
             repin(pin);
-            *lock(&self.0.warped) = Some(pin);
+            *lock(&self.0.warped) = Some(Warp::new(from, pin));
             let _ = CGDisplayHideCursor(CGMainDisplayID());
         } else {
             let _ = CGAssociateMouseAndMouseCursorPosition(true);
@@ -318,8 +306,9 @@ impl CaptureControl for Control {
     }
 
     fn warp(&self, p: Point) {
+        let from = cursor_pos().unwrap_or(p);
         let _ = CGWarpMouseCursorPosition(cg(p));
-        *lock(&self.0.warped) = Some(p);
+        *lock(&self.0.warped) = Some(Warp::new(from, p));
         // Warping briefly suppresses local events; re-associate immediately.
         if !self.0.grabbed.load(Ordering::SeqCst) {
             let _ = CGAssociateMouseAndMouseCursorPosition(true);
@@ -428,39 +417,24 @@ unsafe extern "C-unwind" fn tap_callback(
         | CGEventType::OtherMouseDragged => {
             let loc = CGEvent::location(Some(ev));
             let pos = Point::new(loc.x.floor() as i32, loc.y.floor() as i32);
-            let warped = lock(&shared.warped).take();
-            let (dx, dy) = if warped.is_some() {
-                // First event after a warp: its delta fields contain the jump
-                // (and its location may predate it). Drop this one event's motion.
-                (0, 0)
-            } else {
-                // The integer delta fields. (The double accessor of the same
-                // fields reports much larger numbers for real trackpad events.)
-                let (ix, iy) =
-                    (field(CGEventField::MouseEventDeltaX) as i32, field(CGEventField::MouseEventDeltaY) as i32);
-                // Safety net: no real device moves this far in one event; a
-                // larger value is a warp artefact and would fling the cursor.
-                (ix.clamp(-MAX_STEP, MAX_STEP), iy.clamp(-MAX_STEP, MAX_STEP))
-            };
+            // The integer delta fields. (The double accessor of the same fields
+            // reports much larger numbers for real trackpad events.)
+            let raw = (field(CGEventField::MouseEventDeltaX) as i32, field(CGEventField::MouseEventDeltaY) as i32);
+            let pending = lock(&shared.warped).take();
+            let ((dx, dy), pending) = pin::motion(pending, (loc.x, loc.y), raw);
+            *lock(&shared.warped) = pending;
             let pos = if shared.grabbed.load(Ordering::Relaxed) {
-                let pin = *lock(&shared.pin);
-                let r = *lock(&shared.pin_rect);
-                // Judge by where the cursor really is (the event's own location can
-                // lag behind a warp), and pull it back at most every 100 ms.
-                let now = Instant::now();
-                let due = lock(&shared.last_repin).is_none_or(|t| now.duration_since(t) > Duration::from_millis(100));
-                if due && let Some(real) = cursor_pos() {
-                    let near_edge = real.x < r.x + REPIN_MARGIN
-                        || real.x >= r.right() - REPIN_MARGIN
-                        || real.y < r.y + REPIN_MARGIN
-                        || real.y >= r.bottom() - REPIN_MARGIN;
-                    if near_edge {
-                        repin(pin);
-                        *lock(&shared.warped) = Some(pin);
-                        *lock(&shared.last_repin) = Some(now);
-                    }
+                // Keep the hidden cursor at the pin: pulled back as soon as it drifts,
+                // judged by where it really is (the event's location can lag a warp).
+                // Left to roam, it follows the hand all over this screen (see `crate::pin`).
+                let at = *lock(&shared.pin);
+                if let Some(real) = cursor_pos()
+                    && pin::needs_repin(real, at)
+                {
+                    repin(at);
+                    *lock(&shared.warped) = Some(Warp::new(real, at));
                 }
-                pin
+                at
             } else {
                 pos
             };
@@ -547,8 +521,6 @@ pub fn start_capture() -> Result<Capture, InputError> {
         tap: OnceLock::new(),
         pin: Mutex::new(Point::default()),
         warped: Mutex::new(None),
-        pin_rect: Mutex::new(Rect::default()),
-        last_repin: Mutex::new(None),
         last_flags: Mutex::new(0),
         gate: crate::gate::KeyGate::default(),
     });

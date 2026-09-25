@@ -187,3 +187,12 @@ Known gaps (v4): still no real Windows device test from this Mac; the lab covers
       for main (Nightly), v* tags and manual runs — any red test job stops the release.
       `os-matrix.yml` merged into it. Browser QA via the ecc Chrome MCP removed (plugin
       `.mcp.json` emptied locally, backup `.mcp.json.bak-chrome-devtools`).
+
+### Fix: the Mac's own cursor moved along while a client had control
+- [x] Cause: while grabbed, the hidden Mac cursor was only pulled back to the screen centre when it
+      came within 120 pt of an edge (at most every 100 ms), so it roamed the whole screen in step
+      with the hand — seen whenever macOS showed the cursor again. Pulls were kept rare because
+      the first event after each warp was dropped (its deltas contain the jump).
+- [x] Fix (`crates/input/src/pin.rs`, used by the macOS tap): pulled back as soon as it drifts
+      40 pt; the event after a warp is measured from the warp target, events queued before it keep
+      their own delta, so frequent pulls lose no motion. 6 unit tests (run on every OS in CI).

@@ -12,6 +12,8 @@ pub mod keymap;
 pub mod mock;
 pub mod modifiers;
 pub mod paste;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod pin;
 pub mod remap;
 
 #[cfg(target_os = "linux")]
