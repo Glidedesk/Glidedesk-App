@@ -1190,8 +1190,11 @@ impl Hub {
         let used: HashSet<Side> =
             self.config.layout.links.iter().filter(|l| l.from == self.local_id).map(|l| l.side).collect();
         let side = [Side::Right, Side::Left, Side::Top, Side::Bottom].into_iter().find(|s| !used.contains(s));
+        // Per monitor: each screen's edge leads to the whole client edge and the
+        // cursor comes back to the screen it left from (smooth with mixed sizes).
+        let per_monitor = |l: LinkSpec| LinkSpec { mapping: glidedesk_layout::Mapping::PerMonitor, ..l };
         let link = if let Some(side) = side {
-            LinkSpec::simple(self.local_id, side, id)
+            per_monitor(LinkSpec::simple(self.local_id, side, id))
         } else {
             // Every side is taken: append to the end of the right-hand chain.
             let mut end = self.local_id;
@@ -1204,7 +1207,7 @@ impl Hub {
                 }
                 end = next;
             }
-            LinkSpec::simple(end, Side::Right, id)
+            per_monitor(LinkSpec::simple(end, Side::Right, id))
         };
         info!(client = %id, side = ?link.side, "placed new client automatically");
         self.config.layout.links.push(link);

@@ -17,7 +17,22 @@ pub fn schema_version(table: &Table) -> u32 {
 }
 
 /// `STEPS[i]` migrates version `i + 1` to `i + 2`.
-const STEPS: &[fn(&mut Table)] = &[v1_to_v2];
+const STEPS: &[fn(&mut Table)] = &[v1_to_v2, v2_to_v3];
+
+/// v3: links map per monitor (each screen's edge ↔ the whole other edge, return
+/// to the screen you left from). Stretching one long edge over several screens
+/// made the cursor jump between screens of different sizes.
+fn v2_to_v3(t: &mut Table) {
+    if let Some(links) = t.get_mut("layout").and_then(|l| l.get_mut("link")).and_then(toml::Value::as_array_mut) {
+        for l in links {
+            if let Some(m) = l.get_mut("mapping")
+                && m.as_str() == Some("continuous")
+            {
+                *m = toml::Value::String("per-monitor".into());
+            }
+        }
+    }
+}
 
 /// v2: keys behave natively on each computer by default (§14 B8). The old
 /// default "auto" (swap Cmd/Ctrl between Mac and PC) becomes "none"; an
@@ -67,6 +82,13 @@ mod tests {
         assert_eq!(t["client"]["key_remap"].as_str(), Some("none"));
         assert_eq!(t["server"]["clients"][0]["key_remap"].as_str(), Some("none"));
         assert_eq!(t["server"]["clients"][1]["key_remap"].as_str(), Some("swap-ctrl-meta"));
+    }
+
+    #[test]
+    fn v3_maps_links_per_monitor() {
+        let mut t: Table = toml::from_str("schema_version = 2\n[[layout.link]]\nmapping = \"continuous\"\n").unwrap();
+        upgrade(&mut t, 2);
+        assert_eq!(t["layout"]["link"][0]["mapping"].as_str(), Some("per-monitor"));
     }
 
     #[test]

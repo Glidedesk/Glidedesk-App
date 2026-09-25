@@ -139,7 +139,9 @@ export function simpleLink(from: DeviceId, side: Side, to: DeviceId): LinkSpec {
     to,
     side,
     handover: { mode: "all" },
-    mapping: "continuous",
+    // Each screen's edge maps to the whole other edge; the cursor returns to the
+    // screen it left from — smooth when screens differ in size.
+    mapping: "per-monitor",
     from_span: { start: 0, end: 1 },
     entry: { mode: "all" },
     to_span: { start: 0, end: 1 },

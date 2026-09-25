@@ -135,8 +135,34 @@ fn natural_scrolling() -> bool {
     VALUE.load(Ordering::Relaxed)
 }
 
-/// Distance (points) the real cursor may drift from the pin before it is pulled back.
-const REPIN_DRIFT: i32 = 60;
+/// The hidden cursor is pulled back to the pin only when it comes this close
+/// (points) to an edge of the pinned screen: every pull costs a warp, so it
+/// should be rare — just enough that the cursor never reaches an edge and stops
+/// producing motion.
+const REPIN_MARGIN: i32 = 120;
+
+/// Turns off the pause (default 0.25 s) macOS inserts after a cursor warp, during
+/// which it drops real mouse input — felt as stutter while another computer has
+/// control. The call is deprecated but still honoured; resolved at run time.
+fn disable_warp_suppression() {
+    unsafe extern "C" {
+        fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+    }
+    type SetInterval = unsafe extern "C" fn(f64) -> i32;
+    const RTLD_DEFAULT: *mut c_void = -2isize as *mut c_void;
+    static ONCE: OnceLock<()> = OnceLock::new();
+    ONCE.get_or_init(|| {
+        // SAFETY: dlsym with RTLD_DEFAULT and a NUL-terminated name is always safe to call.
+        let p = unsafe { dlsym(RTLD_DEFAULT, c"CGSetLocalEventsSuppressionInterval".as_ptr()) };
+        if let Some(p) = NonNull::new(p) {
+            // SAFETY: the symbol has this C signature (CoreGraphics, since 10.0).
+            unsafe {
+                let set: SetInterval = std::mem::transmute(p.as_ptr());
+                set(0.0);
+            }
+        }
+    });
+}
 
 #[link(name = "Carbon", kind = "framework")]
 unsafe extern "C" {
@@ -252,6 +278,10 @@ struct Shared {
     /// which bounced the cursor straight home); that one event's movement is
     /// measured from this point instead.
     warped: Mutex<Option<Point>>,
+    /// Screen the cursor is pinned to while grabbed.
+    pin_rect: Mutex<Rect>,
+    /// Sub-point motion carried to the next event (trackpads move in fractions).
+    remainder: Mutex<(f64, f64)>,
     /// Device-dependent modifier bits last seen (to derive up/down).
     last_flags: Mutex<u64>,
     gate: crate::gate::KeyGate,
@@ -292,6 +322,8 @@ impl CaptureControl for Control {
             let centre = to_rect(CGDisplayBounds(CGMainDisplayID()));
             let pin = Point::new(centre.x + centre.w / 2, centre.y + centre.h / 2);
             *lock(&self.0.pin) = pin;
+            *lock(&self.0.pin_rect) = centre;
+            disable_warp_suppression();
             allow_background_cursor_hiding();
             repin(pin);
             *lock(&self.0.warped) = Some(pin);
@@ -413,14 +445,28 @@ unsafe extern "C-unwind" fn tap_callback(
         | CGEventType::OtherMouseDragged => {
             let loc = CGEvent::location(Some(ev));
             let pos = Point::new(loc.x.floor() as i32, loc.y.floor() as i32);
-            let (dx, dy) = match lock(&shared.warped).take() {
+            let warped = lock(&shared.warped).take();
+            let (dx, dy) = if let Some(from) = warped {
                 // First event after a warp: its delta fields contain the jump.
-                Some(from) => (pos.x - from.x, pos.y - from.y),
-                None => (field(CGEventField::MouseEventDeltaX) as i32, field(CGEventField::MouseEventDeltaY) as i32),
+                (pos.x - from.x, pos.y - from.y)
+            } else {
+                // Fractional deltas (trackpads), carrying what is left over.
+                let fdx = CGEvent::double_value_field(Some(ev), CGEventField::MouseEventDeltaX);
+                let fdy = CGEvent::double_value_field(Some(ev), CGEventField::MouseEventDeltaY);
+                let mut rem = lock(&shared.remainder);
+                let (x, y) = (fdx + rem.0, fdy + rem.1);
+                let (ix, iy) = (x.trunc(), y.trunc());
+                *rem = (x - ix, y - iy);
+                (ix as i32, iy as i32)
             };
             let pos = if shared.grabbed.load(Ordering::Relaxed) {
                 let pin = *lock(&shared.pin);
-                if (pos.x - pin.x).abs() > REPIN_DRIFT || (pos.y - pin.y).abs() > REPIN_DRIFT {
+                let r = *lock(&shared.pin_rect);
+                let near_edge = pos.x < r.x + REPIN_MARGIN
+                    || pos.x >= r.right() - REPIN_MARGIN
+                    || pos.y < r.y + REPIN_MARGIN
+                    || pos.y >= r.bottom() - REPIN_MARGIN;
+                if near_edge {
                     repin(pin);
                     *lock(&shared.warped) = Some(pin);
                 }
@@ -512,6 +558,8 @@ pub fn start_capture() -> Result<Capture, InputError> {
         tap: OnceLock::new(),
         pin: Mutex::new(Point::default()),
         warped: Mutex::new(None),
+        pin_rect: Mutex::new(Rect::default()),
+        remainder: Mutex::new((0.0, 0.0)),
         last_flags: Mutex::new(0),
         gate: crate::gate::KeyGate::default(),
     });

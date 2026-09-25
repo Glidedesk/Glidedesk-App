@@ -11,7 +11,7 @@ use glidedesk_proto::{DEFAULT_PORT, DeviceId};
 use serde::{Deserialize, Serialize};
 
 /// Current schema version written by this build.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
