@@ -42,9 +42,9 @@ export function LayoutPage({ status, config, update }: { status: AgentStatus; co
           {w}
         </Callout>
       ))}
-      <div className="flex h-[calc(100%-8px)] min-h-[440px] gap-4">
+      <div className="flex flex-col gap-4 lg:h-[calc(100%-8px)] lg:min-h-[440px] lg:flex-row">
         <div className="flex min-w-0 flex-1 flex-col gap-3">
-          <div className="min-h-0 flex-1">
+          <div className="h-[360px] min-h-0 sm:h-[440px] lg:h-auto lg:flex-1">
             <LayoutEditor status={status} config={config} selected={selected} onSelect={setSelected} onLinks={setLinks} />
           </div>
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-muted">
@@ -54,10 +54,10 @@ export function LayoutPage({ status, config, update }: { status: AgentStatus; co
             <span>Clipboard {status.clipboard ? "on" : "off"}</span>
             <span>Files {status.files ? "on" : "off"}</span>
             {server?.locked && <span className="text-warn">Cursor locked to this screen</span>}
-            <span className="ml-auto">Tip: select a computer and use the arrow keys to move it.</span>
+            <span className="lg:ml-auto">Tip: select a computer and use the arrow keys to move it.</span>
           </div>
         </div>
-        <aside className="w-[300px] shrink-0 overflow-y-auto rounded-2xl border border-line bg-panel p-4" aria-label="Selected computer">
+        <aside className="w-full shrink-0 overflow-y-auto rounded-2xl border border-line bg-panel p-4 lg:w-[300px]" aria-label="Selected computer">
           {selectedClient ? (
             <>
               <h2 className="mb-3 text-[15px] font-semibold">{boxes.get(selectedClient)?.name}</h2>

@@ -6,14 +6,14 @@ import { Icon } from "./icons";
 export function Page({ title, subtitle, actions, children }: { title: string; subtitle?: string; actions?: ReactNode; children: ReactNode }) {
   return (
     <main className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
-      <header data-tauri-drag-region className="flex items-end justify-between gap-4 border-b border-line bg-panel/40 px-8 pt-7 pb-5">
-        <div className="min-w-0" data-tauri-drag-region>
-          <h1 className="text-[22px] font-semibold tracking-tight">{title}</h1>
+      <header data-tauri-drag-region className="flex flex-wrap items-end justify-between gap-3 border-b border-line bg-panel/40 px-4 pt-5 pb-4 md:px-8 md:pt-7 md:pb-5">
+        <div className="min-w-0 flex-1 basis-64" data-tauri-drag-region>
+          <h1 className="text-[20px] font-semibold tracking-tight md:text-[22px]">{title}</h1>
           {subtitle && <p className="mt-1 text-muted">{subtitle}</p>}
         </div>
-        <div className="flex shrink-0 items-center gap-2">{actions}</div>
+        {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
       </header>
-      <div className="page-in flex-1 overflow-y-auto px-8 py-6">{children}</div>
+      <div className="page-in flex-1 overflow-y-auto px-4 py-5 md:px-8 md:py-6">{children}</div>
     </main>
   );
 }
@@ -30,14 +30,14 @@ export function Section({ title, description, children }: { title: string; descr
 
 export function Row({ label, hint, children, htmlFor }: { label: ReactNode; hint?: ReactNode; children?: ReactNode; htmlFor?: string }) {
   return (
-    <div className="flex items-center justify-between gap-6 px-4 py-3">
+    <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
       <div className="min-w-0">
         <label htmlFor={htmlFor} className="block font-medium">
           {label}
         </label>
         {hint && <div className="mt-0.5 text-[12.5px] leading-snug text-muted">{hint}</div>}
       </div>
-      <div className="flex shrink-0 items-center gap-2">{children}</div>
+      {children != null && <div className="flex max-w-full flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">{children}</div>}
     </div>
   );
 }
@@ -188,7 +188,7 @@ export function Slider({ value, onChange, min, max, step, label, format }: { val
 
 export function Select<T extends string>({ value, onChange, options, label }: { value: T; onChange: (v: T) => void; options: [T, string][]; label: string }) {
   return (
-    <select aria-label={label} className="rounded-lg border border-line bg-panel px-2 py-1" value={value} onChange={(e) => onChange(e.target.value as T)}>
+    <select aria-label={label} className="max-w-full rounded-lg border border-line bg-panel px-2 py-1" value={value} onChange={(e) => onChange(e.target.value as T)}>
       {options.map(([v, l]) => (
         <option key={v} value={v}>
           {l}
@@ -227,7 +227,7 @@ export function TextInput({
       aria-describedby={describedBy}
       aria-label={label}
       aria-invalid={invalid || undefined}
-      className={`${width} rounded-lg border bg-panel px-2 py-1 ${invalid ? "border-bad" : "border-line"}`}
+      className={`${width} max-w-full rounded-lg border bg-panel px-2 py-1 ${invalid ? "border-bad" : "border-line"}`}
       value={value}
       placeholder={placeholder}
       spellCheck={false}
@@ -262,8 +262,8 @@ export function Modal({ open, onClose, title, children, footer }: { open: boolea
           {title}
         </h2>
       </div>
-      <div className="max-h-[60vh] overflow-y-auto px-5 py-4">{children}</div>
-      {footer && <footer className="flex justify-end gap-2 border-t border-line px-5 py-3">{footer}</footer>}
+      <div className="max-h-[60vh] overflow-y-auto px-3 py-4 sm:px-5">{children}</div>
+      {footer && <footer className="flex flex-wrap justify-end gap-2 border-t border-line px-3 py-3 sm:px-5">{footer}</footer>}
     </dialog>
   );
 }

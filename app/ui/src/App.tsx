@@ -118,9 +118,19 @@ function Main({ page }: { page: string }) {
   useEffect(() => {
     const un = onNotice((n) => {
       if (n.kind === "error") toast.show(n.message, "error");
+      else if (n.kind === "info") toast.show(n.message);
     });
     return () => void un.then((f) => f());
   }, [toast]);
+  // Phones: the sections live in a drawer opened from the top bar.
+  const [menu, setMenu] = useState(false);
+  useEffect(() => setMenu(false), [page]);
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMenu(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menu]);
 
   const role = status?.role ?? "unset";
   const nav = useMemo<[PageId, string, ReactNode][]>(
@@ -157,30 +167,63 @@ function Main({ page }: { page: string }) {
         : "Stopped"
       : status.client?.state === "connected"
         ? `Connected to ${status.client.server_name ?? "server"}`
-        : status.running
-          ? "Looking for the server…"
-          : "Stopped";
+        : status.client?.state === "rejected"
+          ? "Refused by the server"
+          : status.running
+            ? "Looking for the server…"
+            : "Stopped";
   const offer = status.server?.offer ?? status.client?.offer ?? null;
-  const pill = status.error ? "bg-bad" : status.running ? "bg-ok" : "bg-muted/60";
+  const pill =
+    status.error || status.client?.state === "rejected"
+      ? "bg-bad"
+      : role === "client" && status.running && status.client?.state !== "connected"
+        ? "bg-warn"
+        : status.running
+          ? "bg-ok"
+          : "bg-muted/60";
   const props = { status, config, update };
 
-  return (
-    <div className="flex h-full">
-      <nav className="flex w-[228px] shrink-0 flex-col border-r border-line bg-panel/70 px-3 pb-3" aria-label="Sections">
-        {/* Space for the macOS window buttons; draggable. */}
-        <div data-tauri-drag-region className="h-9 shrink-0" />
-        <div className="mb-5 flex items-center gap-2.5 px-2">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] bg-gradient-to-b from-accent-2 to-accent text-white shadow-sm">
-            <Icon.Logo size={20} />
-          </div>
-          <div className="min-w-0">
-            <div className="truncate font-semibold">{status.device_name}</div>
-            <div className="flex items-center gap-1.5 truncate text-[12px] text-muted">
-              <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${pill}`} aria-hidden />
-              {header}
-            </div>
-          </div>
+  const identity = (
+    <div className="flex min-w-0 items-center gap-2.5">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] bg-gradient-to-b from-accent-2 to-accent text-white shadow-sm">
+        <Icon.Logo size={20} />
+      </div>
+      <div className="min-w-0">
+        <div className="truncate font-semibold">{status.device_name}</div>
+        <div className="flex items-center gap-1.5 truncate text-[12px] text-muted">
+          <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${pill}`} aria-hidden />
+          {header}
         </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="flex h-full flex-col md:flex-row">
+      {/* Phones: top bar with the menu. */}
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line bg-panel/70 px-3 py-2 md:hidden">
+        {identity}
+        <button
+          type="button"
+          aria-label={menu ? "Close menu" : "Open menu"}
+          aria-expanded={menu}
+          aria-controls="sections"
+          onClick={() => setMenu((m) => !m)}
+          className="rounded-lg p-2 text-fg/80 hover:bg-panel-2 focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
+        >
+          {menu ? <Icon.Close size={20} /> : <Icon.Menu size={20} />}
+        </button>
+      </div>
+      {menu && <div className="fixed inset-0 z-20 bg-black/40 md:hidden" aria-hidden onClick={() => setMenu(false)} />}
+      <nav
+        id="sections"
+        className={`${menu ? "fixed inset-y-0 left-0 z-30 flex shadow-2xl" : "hidden"} w-[260px] shrink-0 flex-col border-r border-line bg-panel px-3 pb-3 md:static md:flex md:w-[228px] md:bg-panel/70 md:shadow-none`}
+        aria-label="Sections"
+      >
+        {/* Space for the macOS window buttons; draggable. */}
+        <div data-tauri-drag-region className="h-4 shrink-0 md:h-9" />
+        <div className="mb-5 hidden px-2 md:block">{identity}</div>
+        <div className="mb-3 px-2 text-[12px] font-semibold uppercase tracking-wide text-muted md:hidden">Sections</div>
         {nav.map(([id, label, icon]) => (
           <NavItem key={id} id={id} label={label} icon={icon} current={current === id} />
         ))}
@@ -189,14 +232,14 @@ function Main({ page }: { page: string }) {
           <SaveIndicator />
         </div>
       </nav>
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {status.error && (
-          <div className="flex items-center gap-2 border-b border-bad/30 bg-bad/10 px-8 py-2.5 text-bad" role="alert">
+          <div className="flex items-center gap-2 border-b border-bad/30 bg-bad/10 px-4 py-2.5 text-bad md:px-8" role="alert">
             <Icon.Error size={16} /> {status.error}
           </div>
         )}
         {offer && (
-          <div className="flex items-center gap-3 border-b border-accent/30 bg-accent-soft px-8 py-2.5 text-fg" role="status">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-accent/30 bg-accent-soft px-4 py-2.5 text-fg md:px-8" role="status">
             <Icon.Clipboard size={16} />
             <span className="min-w-0 flex-1 truncate">
               <b>{offer}</b> is ready to paste here — press {status.platform === "macos" ? "⌘V" : "Ctrl+V"} in a folder.
@@ -207,7 +250,7 @@ function Main({ page }: { page: string }) {
           </div>
         )}
         {error && (
-          <div className="flex items-center gap-2 border-b border-warn/30 bg-warn/10 px-8 py-2.5 text-warn" role="alert">
+          <div className="flex items-center gap-2 border-b border-warn/30 bg-warn/10 px-4 py-2.5 text-warn md:px-8" role="alert">
             <Icon.Warning size={16} /> {error}
           </div>
         )}

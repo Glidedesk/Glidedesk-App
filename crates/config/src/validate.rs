@@ -62,6 +62,16 @@ impl Config {
             net.port = glidedesk_proto::DEFAULT_PORT;
             i.push(Issue::new("server.network.port", "port 0 is not allowed; using the default"));
         }
+        // IPv4 only: an IPv6 listen address can never be bound.
+        net.addresses.retain(|a| {
+            if a.is_ipv4() {
+                return true;
+            }
+            i.push(Issue::new("server.network.addresses", format!("dropped {a}: Glidedesk uses IPv4 only")));
+            false
+        });
+        let mut seen_if = HashSet::new();
+        net.interfaces.retain(|n| seen_if.insert(n.clone()));
         retain_cidrs(&mut net.allow_list, "server.network.allow_list", i);
         retain_cidrs(&mut net.block_list, "server.network.block_list", i);
 

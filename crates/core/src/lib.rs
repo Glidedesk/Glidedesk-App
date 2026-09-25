@@ -64,6 +64,8 @@ pub enum Notice {
     Info {
         message: String,
     },
+    /// Clients the user forgot (they rejoin only when their user asks); persist.
+    Forgotten(Vec<DeviceId>),
 }
 
 #[derive(Debug, thiserror::Error)]

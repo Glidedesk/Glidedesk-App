@@ -48,28 +48,48 @@ pub struct BindStatus {
     pub error: Option<String>,
 }
 
-fn udp_socket(addr: SocketAddr, dual_stack: bool) -> std::io::Result<UdpSocket> {
-    let domain = if addr.is_ipv6() { Domain::IPV6 } else { Domain::IPV4 };
-    let s = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
-    if addr.is_ipv6() {
-        s.set_only_v6(!dual_stack)?;
+fn udp_socket(addr: SocketAddr) -> std::io::Result<UdpSocket> {
+    if !addr.is_ipv4() {
+        return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "Glidedesk uses IPv4 only"));
     }
+    let s = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     s.bind(&addr.into())?;
     s.set_nonblocking(true)?;
     Ok(s.into())
 }
 
+/// Binds, retrying "address in use" for a moment: right after a restart the
+/// previous server may still be letting go of the port.
+fn bind_retry(addr: SocketAddr) -> std::io::Result<UdpSocket> {
+    let mut tries = 0;
+    loop {
+        match udp_socket(addr) {
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && tries < 20 => {
+                tries += 1;
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            other => return other,
+        }
+    }
+}
+
 /// Listening side: one endpoint per bound address, incoming connections merged.
+/// Addresses come and go with [`Server::update`] (a network switched off or on)
+/// without disturbing connections on the others.
 #[derive(Debug)]
 pub struct Server {
-    endpoints: Vec<Endpoint>,
+    endpoints: Vec<(SocketAddr, Endpoint)>,
+    config: quinn::ServerConfig,
+    /// Kept so the merged channel never closes, even with no endpoint.
+    tx: mpsc::Sender<quinn::Incoming>,
     incoming: mpsc::Receiver<quinn::Incoming>,
     fingerprint: [u8; 32],
 }
 
 impl Server {
-    /// Binds every address of `plan`; addresses that fail are reported, not fatal,
-    /// unless none succeed.
+    /// Binds every address of `plan`. Addresses that fail are reported, not
+    /// fatal; the wildcard plan must bind. An empty plan listens nowhere until
+    /// [`Server::update`] brings an address.
     pub fn bind(plan: &BindPlan, tuning: Tuning) -> Result<(Self, Vec<BindStatus>), NetError> {
         let (tls_cfg, fingerprint) = tls::server_config()?;
         let crypto = QuicServerConfig::try_from(tls_cfg).map_err(|e| NetError::Tls(e.to_string()))?;
@@ -77,45 +97,62 @@ impl Server {
         server_cfg.transport_config(Arc::new(transport(tuning)?));
         // Connection migration is not needed on a LAN and widens the attack surface.
         server_cfg.migration(false);
-
-        let targets: Vec<(SocketAddr, bool)> = match plan {
-            BindPlan::Wildcard(port) => vec![(SocketAddr::new(unspecified(true), *port), true)],
-            BindPlan::Wildcard4(port) => vec![(SocketAddr::new(unspecified(false), *port), false)],
-            BindPlan::Addrs(a) => a.iter().map(|a| (*a, false)).collect(),
-        };
-        if targets.is_empty() {
-            return Err(NetError::Config(
-                "none of the chosen network interfaces/IP addresses is available (Network → Listen on)".into(),
-            ));
+        let (tx, incoming) = mpsc::channel(64);
+        let mut server = Self { endpoints: Vec::new(), config: server_cfg, tx, incoming, fingerprint };
+        let statuses = server.listen(plan, true);
+        if matches!(plan, BindPlan::Wildcard(_)) && server.endpoints.is_empty() {
+            return Err(NetError::NothingBound(statuses));
         }
+        Ok((server, statuses))
+    }
+
+    /// Listens on exactly the addresses of `plan`: binds new ones, closes the
+    /// ones no longer wanted, keeps the rest (and their connections). Never
+    /// blocks: an address that is busy is reported and can be retried by
+    /// calling this again.
+    pub fn update(&mut self, plan: &BindPlan) -> Vec<BindStatus> {
+        self.listen(plan, false)
+    }
+
+    /// `retry`: wait (blocking, up to 2 s) for a port still held by the previous
+    /// server — only at start, never from a running event loop.
+    fn listen(&mut self, plan: &BindPlan, retry: bool) -> Vec<BindStatus> {
+        let wanted: Vec<SocketAddr> = match plan {
+            BindPlan::Wildcard(port) => vec![SocketAddr::new(unspecified(), *port)],
+            // IPv6 entries fail to bind below and are reported (IPv4 only).
+            BindPlan::Addrs(a) => a.clone(),
+        };
+        self.endpoints.retain(|(addr, ep)| {
+            let keep = wanted.contains(addr);
+            if !keep {
+                debug!(%addr, "no longer listening");
+                ep.close(VarInt::from_u32(0), b"network gone");
+            }
+            keep
+        });
         let mut statuses = Vec::new();
-        let mut endpoints = Vec::new();
-        for (addr, dual) in targets {
-            // Right after a restart the previous server may still be letting go of
-            // the port: retry "address in use" for a moment instead of failing.
-            let bind = |addr, dual| {
-                let mut tries = 0;
-                loop {
-                    match udp_socket(addr, dual) {
-                        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && tries < 20 => {
-                            tries += 1;
-                            std::thread::sleep(Duration::from_millis(100));
-                        }
-                        other => return other,
-                    }
-                }
-            };
-            let sock = bind(addr, dual).or_else(|e| {
-                // No IPv6 on this host: fall back to IPv4 wildcard.
-                if dual { udp_socket(SocketAddr::new(unspecified(false), addr.port()), false) } else { Err(e) }
+        for addr in wanted {
+            if let Some((_, ep)) = self.endpoints.iter().find(|(a, _)| *a == addr) {
+                statuses.push(BindStatus { addr: ep.local_addr().unwrap_or(addr), error: None });
+                continue;
+            }
+            let sock = if retry { bind_retry(addr) } else { udp_socket(addr) };
+            let ep = sock.and_then(|s| {
+                Endpoint::new(EndpointConfig::default(), Some(self.config.clone()), s, Arc::new(TokioRuntime))
             });
-            match sock.and_then(|s| {
-                Endpoint::new(EndpointConfig::default(), Some(server_cfg.clone()), s, Arc::new(TokioRuntime))
-            }) {
+            match ep {
                 Ok(ep) => {
                     debug!(%addr, "listening");
                     statuses.push(BindStatus { addr: ep.local_addr().unwrap_or(addr), error: None });
-                    endpoints.push(ep);
+                    let (accepting, tx) = (ep.clone(), self.tx.clone());
+                    tokio::spawn(async move {
+                        while let Some(inc) = accepting.accept().await {
+                            if tx.send(inc).await.is_err() {
+                                break;
+                            }
+                        }
+                    });
+                    self.endpoints.push((addr, ep));
                 }
                 Err(e) => {
                     warn!(%addr, error = %e, "bind failed");
@@ -123,22 +160,7 @@ impl Server {
                 }
             }
         }
-        if endpoints.is_empty() {
-            return Err(NetError::NothingBound(statuses));
-        }
-        let (tx, rx) = mpsc::channel(64);
-        for ep in &endpoints {
-            let ep = ep.clone();
-            let tx = tx.clone();
-            tokio::spawn(async move {
-                while let Some(inc) = ep.accept().await {
-                    if tx.send(inc).await.is_err() {
-                        break;
-                    }
-                }
-            });
-        }
-        Ok((Self { endpoints, incoming: rx, fingerprint }, statuses))
+        statuses
     }
 
     /// Next incoming connection attempt (not yet accepted).
@@ -148,7 +170,7 @@ impl Server {
 
     #[must_use]
     pub fn local_addrs(&self) -> Vec<SocketAddr> {
-        self.endpoints.iter().filter_map(|e| e.local_addr().ok()).collect()
+        self.endpoints.iter().filter_map(|(_, e)| e.local_addr().ok()).collect()
     }
 
     #[must_use]
@@ -158,7 +180,7 @@ impl Server {
 
     /// Closes every endpoint and connection immediately.
     pub fn close(&self, reason: &[u8]) {
-        for ep in &self.endpoints {
+        for (_, ep) in &self.endpoints {
             ep.close(VarInt::from_u32(0), reason);
         }
     }
@@ -166,16 +188,16 @@ impl Server {
     /// Waits (bounded) until closed endpoints have released their sockets, so a
     /// restarted server can bind the same port straight away.
     pub async fn wait_closed(&self) {
-        for ep in &self.endpoints {
+        for (_, ep) in &self.endpoints {
             let _ = tokio::time::timeout(Duration::from_secs(2), ep.wait_idle()).await;
         }
     }
 }
 
-/// Client endpoint (optionally bound to one interface address).
-pub fn client_endpoint(bind_ip: Option<IpAddr>, server_is_v6: bool, tuning: Tuning) -> Result<Endpoint, NetError> {
-    let ip = bind_ip.unwrap_or_else(|| unspecified(server_is_v6));
-    let sock = udp_socket(SocketAddr::new(ip, 0), false).map_err(NetError::Io)?;
+/// Client endpoint (IPv4, optionally bound to one interface address).
+pub fn client_endpoint(bind_ip: Option<IpAddr>, tuning: Tuning) -> Result<Endpoint, NetError> {
+    let ip = bind_ip.filter(IpAddr::is_ipv4).unwrap_or_else(unspecified);
+    let sock = udp_socket(SocketAddr::new(ip, 0)).map_err(NetError::Io)?;
     let mut ep = Endpoint::new(EndpointConfig::default(), None, sock, Arc::new(TokioRuntime)).map_err(NetError::Io)?;
     let crypto = QuicClientConfig::try_from(tls::client_config()?).map_err(|e| NetError::Tls(e.to_string()))?;
     let mut cfg = quinn::ClientConfig::new(Arc::new(crypto));
@@ -184,8 +206,11 @@ pub fn client_endpoint(bind_ip: Option<IpAddr>, server_is_v6: bool, tuning: Tuni
     Ok(ep)
 }
 
-/// Connects to a server.
+/// Connects to a server (IPv4 only).
 pub async fn connect(ep: &Endpoint, addr: SocketAddr) -> Result<Connection, NetError> {
+    if !addr.is_ipv4() {
+        return Err(NetError::Connect(format!("{addr} is IPv6; Glidedesk uses IPv4 only")));
+    }
     let connecting = ep.connect(addr, "glidedesk").map_err(|e| NetError::Connect(e.to_string()))?;
     connecting.await.map_err(|e| NetError::Connect(e.to_string()))
 }

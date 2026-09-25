@@ -17,7 +17,21 @@ pub fn schema_version(table: &Table) -> u32 {
 }
 
 /// `STEPS[i]` migrates version `i + 1` to `i + 2`.
-const STEPS: &[fn(&mut Table)] = &[v1_to_v2, v2_to_v3];
+const STEPS: &[fn(&mut Table)] = &[v1_to_v2, v2_to_v3, v3_to_v4];
+
+/// v4: Glidedesk runs on IPv4 only. The IPv6 switches go, and IPv6 listen
+/// addresses are dropped (they could never be bound again).
+fn v3_to_v4(t: &mut Table) {
+    if let Some(net) = t.get_mut("server").and_then(|s| s.get_mut("network")).and_then(toml::Value::as_table_mut) {
+        net.remove("ipv6");
+        if let Some(addrs) = net.get_mut("addresses").and_then(toml::Value::as_array_mut) {
+            addrs.retain(|a| a.as_str().is_some_and(|s| s.parse::<std::net::Ipv4Addr>().is_ok()));
+        }
+    }
+    if let Some(client) = t.get_mut("client").and_then(toml::Value::as_table_mut) {
+        client.remove("ipv6");
+    }
+}
 
 /// v3: links map per monitor (each screen's edge ↔ the whole other edge, return
 /// to the screen you left from). Stretching one long edge over several screens
@@ -89,6 +103,18 @@ mod tests {
         let mut t: Table = toml::from_str("schema_version = 2\n[[layout.link]]\nmapping = \"continuous\"\n").unwrap();
         upgrade(&mut t, 2);
         assert_eq!(t["layout"]["link"][0]["mapping"].as_str(), Some("per-monitor"));
+    }
+
+    #[test]
+    fn v4_drops_ipv6() {
+        let mut t: Table = toml::from_str(
+            "schema_version = 3\n[server.network]\nipv6 = true\naddresses = [\"10.0.0.2\", \"fd00::1\"]\n[client]\nipv6 = true\n",
+        )
+        .unwrap();
+        upgrade(&mut t, 3);
+        assert!(t["server"]["network"].get("ipv6").is_none());
+        assert!(t["client"].get("ipv6").is_none());
+        assert_eq!(t["server"]["network"]["addresses"].as_array().unwrap().len(), 1);
     }
 
     #[test]

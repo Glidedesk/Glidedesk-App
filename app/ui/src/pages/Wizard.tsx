@@ -29,8 +29,8 @@ export function Wizard({ status, config, onDone }: { status: AgentStatus; config
   };
   const steps = [
     <div key="role" className="space-y-4">
-      <h2 className="text-[22px] font-semibold">How will this computer be used?</h2>
-      <div className="grid grid-cols-2 gap-4">
+      <h2 className="text-[19px] font-semibold sm:text-[22px]">How will this computer be used?</h2>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         {(
           [
             ["server", "Server", "Its keyboard and mouse control the other computers."],
@@ -51,7 +51,7 @@ export function Wizard({ status, config, onDone }: { status: AgentStatus; config
       </div>
     </div>,
     <div key="perm" className="space-y-4">
-      <h2 className="text-[22px] font-semibold">{mac ? "Allow Glidedesk to use the keyboard and mouse" : "Almost there"}</h2>
+      <h2 className="text-[19px] font-semibold sm:text-[22px]">{mac ? "Allow Glidedesk to use the keyboard and mouse" : "Almost there"}</h2>
       {mac ? (
         <>
           <p className="text-muted">
@@ -82,7 +82,7 @@ export function Wizard({ status, config, onDone }: { status: AgentStatus; config
     <div key="net" className="space-y-4">
       {role === "server" ? (
         <>
-          <h2 className="text-[22px] font-semibold">Ready to share</h2>
+          <h2 className="text-[19px] font-semibold sm:text-[22px]">Ready to share</h2>
           <p className="text-muted">
             Glidedesk will listen on all networks. You can pick exact interfaces or IP addresses later in Network. Install Glidedesk on your
             other computers and choose Client — they appear here automatically.
@@ -90,18 +90,18 @@ export function Wizard({ status, config, onDone }: { status: AgentStatus; config
         </>
       ) : (
         <>
-          <h2 className="text-[22px] font-semibold">Find the server</h2>
+          <h2 className="text-[19px] font-semibold sm:text-[22px]">Find the server</h2>
           <p className="text-muted">Leave empty to find it automatically on this network, or type its computer name or IP address.</p>
-          <TextInput label="Server address" value={address} placeholder="Automatic" onChange={setAddress} width="w-80" />
+          <TextInput label="Server address" value={address} placeholder="Automatic" onChange={setAddress} width="w-full sm:w-80" />
           <p className="text-muted">If the server has a password, enter it here.</p>
-          <TextInput type="password" autoComplete="current-password" label="Server password" value={password} placeholder="No password" onChange={setPassword} width="w-80" />
+          <TextInput type="password" autoComplete="current-password" label="Server password" value={password} placeholder="No password" onChange={setPassword} width="w-full sm:w-80" />
         </>
       )}
     </div>,
   ];
   return (
-    <div className="flex h-full items-center justify-center p-8">
-      <div className="w-[620px] max-w-full rounded-3xl border border-line bg-panel p-8 shadow-sm">
+    <div className="flex h-full items-center justify-center overflow-y-auto p-4 sm:p-8">
+      <div className="w-[620px] max-w-full rounded-3xl border border-line bg-panel p-5 shadow-sm sm:p-8">
         <div className="mb-6 flex gap-1.5" aria-label={`Step ${step + 1} of ${steps.length}`}>
           {steps.map((_, i) => (
             <span key={i} className={`h-1.5 flex-1 rounded-full ${i <= step ? "bg-accent" : "bg-line"}`} />

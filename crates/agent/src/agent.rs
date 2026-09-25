@@ -111,6 +111,7 @@ impl Agent {
                     capture,
                     monitors,
                     known_monitors: self.state.state.known_monitors.clone(),
+                    forgotten: self.state.state.forgotten.clone(),
                     app_version: VERSION.into(),
                     host_name: Self::host_name(),
                     clipboard: self.clipboard(),
@@ -365,6 +366,11 @@ impl Agent {
                 Some(NoticeView::ServerConnected { name })
             }
             Notice::Identify { label } => Some(NoticeView::Identify { label }),
+            Notice::Forgotten(ids) => {
+                self.state.state.forgotten = ids.into_iter().collect();
+                self.state.save();
+                None
+            }
             Notice::Error { message } => Some(NoticeView::Error { message }),
             Notice::Info { message } => Some(NoticeView::Info { message }),
         };
@@ -493,15 +499,29 @@ impl Agent {
                 }
             }
             Request::Disconnect { id } => self.server_cmd(ServerCommand::Disconnect(id)).await,
+            // Both change settings behind the window's back: it must reload, or
+            // its older copy would undo them on its next save.
             Request::SetBlocked { id, blocked } => {
                 let mut cfg = self.config.clone();
                 let entry = cfg.server.clients.iter_mut().find(|c| c.id == id).ok_or("unknown client")?;
                 entry.blocked = blocked;
-                self.apply_config(cfg, &[]).await
+                let out = self.apply_config(cfg, &[]).await;
+                let _ = self.events.send(Event::ConfigChanged);
+                out
             }
             Request::Forget { id } => {
+                if self.config.server.client(&id).is_none() {
+                    return Err("unknown client".into());
+                }
                 let cfg = self.forget_client(id);
-                self.apply_config(cfg, &[id]).await
+                if !matches!(self.runtime, Runtime::Server(_)) {
+                    // Not running: remember it here (the server does it otherwise).
+                    self.state.state.forgotten.insert(id);
+                    self.state.save();
+                }
+                let out = self.apply_config(cfg, &[id]).await;
+                let _ = self.events.send(Event::ConfigChanged);
+                out
             }
             Request::ListInterfaces => Ok(to_json(&glidedesk_net::list_interfaces())),
             Request::ExportConfig { layout_only } => {

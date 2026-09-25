@@ -31,6 +31,10 @@ const CONTROL_QUEUE: usize = 64;
 const MAX_CLIENTS: usize = 64;
 const SECURE_INPUT_WARNING: &str = "typing";
 const EDGE_NOTE: &str = "The cursor stayed here";
+/// Prefix of the "a chosen network is off" warnings.
+const NET_NOTE: &str = "Network";
+/// How often the chosen networks are checked (off → warn, back → listen again).
+const NETWORK_POLL: Duration = Duration::from_secs(3);
 
 /// Commands from the agent / UI / tray.
 #[derive(Debug)]
@@ -70,6 +74,8 @@ pub struct ServerDeps {
     /// Monitors of clients seen before (from the state file), so offline
     /// clients still appear in the layout.
     pub known_monitors: HashMap<DeviceId, Vec<MonitorInfo>>,
+    /// Clients the user forgot: refused until their user reconnects on purpose.
+    pub forgotten: HashSet<DeviceId>,
     pub app_version: String,
     pub host_name: String,
     /// System clipboard (`None` where unsupported).
@@ -87,14 +93,8 @@ pub fn start(config: Config, deps: ServerDeps) -> Result<ServerHandle, CoreError
     let local_monitors = (deps.monitors)().map_err(|e| CoreError::Input(e.to_string()))?;
     let net_cfg = &config.server.network;
     let all_ifaces = glidedesk_net::list_interfaces();
-    let plan = glidedesk_net::resolve_bind(
-        net_cfg.mode,
-        &net_cfg.interfaces,
-        &net_cfg.addresses,
-        net_cfg.port,
-        &all_ifaces,
-        net_cfg.ipv6,
-    );
+    let plan =
+        glidedesk_net::resolve_bind(net_cfg.mode, &net_cfg.interfaces, &net_cfg.addresses, net_cfg.port, &all_ifaces);
     let tuning = Tuning {
         keep_alive: Duration::from_millis(u64::from(config.server.health.interval_ms)),
         idle_timeout: Duration::from_millis(u64::from(config.server.health.idle_timeout_ms)),
@@ -111,8 +111,7 @@ pub fn start(config: Config, deps: ServerDeps) -> Result<ServerHandle, CoreError
             glidedesk_config::BindMode::All => None,
             _ => Some((net_cfg.interfaces.as_slice(), net_cfg.addresses.as_slice())),
         };
-        match Advertiser::start(config.device.id, &name, &deps.host_name, &deps.app_version, port, scope, net_cfg.ipv6)
-        {
+        match Advertiser::start(config.device.id, &name, &deps.host_name, &deps.app_version, port, scope) {
             Ok(a) => Some(a),
             Err(e) => {
                 warn!(error = %e, "mDNS announcement failed; clients must use the address");
@@ -130,6 +129,8 @@ pub fn start(config: Config, deps: ServerDeps) -> Result<ServerHandle, CoreError
 
     let mut hub = Hub::new(config, deps, local_monitors, name, net, bind, admission, status_tx, notice_tx, event_tx);
     hub.advertiser = advertiser;
+    hub.plan = plan;
+    hub.note_networks(&all_ifaces);
     let task = tokio::spawn(async move { hub.run(cmd_rx, event_rx).await });
     Ok(ServerHandle { commands: cmd_tx, status: status_rx, notices: notice_rx, task })
 }
@@ -216,6 +217,8 @@ struct Hub {
     hotkeys: Vec<(Hotkey, Action)>,
     net: NetServer,
     bind: Vec<BindStatus>,
+    /// Addresses we should listen on right now (follows networks going on/off).
+    plan: glidedesk_net::BindPlan,
     admission: Admission,
     advertiser: Option<Advertiser>,
     status_tx: watch::Sender<ServerView>,
@@ -238,6 +241,8 @@ struct Hub {
     layout_summary: String,
     /// Motion statistics of the current stay on a client (logged on return).
     visit: Option<Visit>,
+    /// Clients the user forgot (see [`ServerDeps::forgotten`]).
+    forgotten: HashSet<DeviceId>,
     /// Server password (PLAN §14.1); `None` = open.
     verifier: Option<Arc<glidedesk_net::auth::Verifier>>,
     throttle: Arc<glidedesk_net::auth::Throttle>,
@@ -307,12 +312,26 @@ fn unix(t: SystemTime) -> u64 {
     t.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
-/// Units per device-independent pixel: macOS uses points (1), Windows physical pixels (scale).
-fn units_per_dip(platform: Option<Platform>, monitors: &[MonitorInfo]) -> f64 {
-    let primary = monitors.iter().find(|m| m.primary).or_else(|| monitors.first());
-    match (platform, primary) {
-        (Some(Platform::Windows), Some(m)) if m.scale > 0.0 => f64::from(m.scale),
+/// Pixels per device-independent pixel on one monitor: macOS and Linux use
+/// logical units (1), Windows physical pixels (its scale, e.g. 1.5 at 150 %).
+fn units_per_dip(platform: Option<Platform>, m: &MonitorInfo) -> f64 {
+    match platform {
+        Some(Platform::Windows) if m.scale > 0.0 => f64::from(m.scale),
         _ => 1.0,
+    }
+}
+
+/// Per-monitor speed factors of a machine relative to the server's primary
+/// screen, so the pointer covers the same visual distance everywhere.
+fn unit_factors(platform: Option<Platform>, monitors: &[MonitorInfo], server: f64) -> Vec<f64> {
+    monitors.iter().map(|m| units_per_dip(platform, m) / server).collect()
+}
+
+fn remap_code(p: RemapPreset) -> u8 {
+    match p {
+        RemapPreset::Auto => 0,
+        RemapPreset::None => 1,
+        RemapPreset::SwapCtrlMeta => 2,
     }
 }
 
@@ -365,6 +384,7 @@ impl Hub {
             hotkeys: Vec::new(),
             net,
             bind,
+            plan: glidedesk_net::BindPlan::Addrs(Vec::new()),
             admission,
             advertiser: None,
             status_tx,
@@ -382,6 +402,7 @@ impl Hub {
             last_edge_note: None,
             layout_summary: String::new(),
             visit: None,
+            forgotten: deps.forgotten,
             verifier: config
                 .server
                 .network
@@ -405,6 +426,8 @@ impl Hub {
         let mut paste_hold = self.sync.hold_watch();
         let mut monitor_poll = tokio::time::interval(MONITOR_POLL);
         monitor_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut network_poll = tokio::time::interval(NETWORK_POLL);
+        network_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         self.publish();
         info!(addrs = ?self.net.local_addrs(), "server running");
 
@@ -430,7 +453,10 @@ impl Hub {
                     None => break,
                 },
                 _ = heartbeat.tick() => self.on_heartbeat(),
+                _ = network_poll.tick() => self.watch_networks(),
                 _ = monitor_poll.tick() => {
+                    let sync = self.sync.clone();
+                    tokio::task::spawn_blocking(move || sync.observe());
                     self.poll_monitors();
                     self.check_secure_input();
                     self.expire_edge_note();
@@ -507,6 +533,57 @@ impl Hub {
         self.warnings.push(format!("{EDGE_NOTE}: {why}"));
         self.last_edge_note = Some((now, why));
         self.publish();
+    }
+
+    /// A chosen network went off or came back: listen on what is there now
+    /// (connections on the other networks stay up) and say what is missing.
+    fn watch_networks(&mut self) {
+        let all = glidedesk_net::list_interfaces();
+        let n = &self.config.server.network;
+        let plan = glidedesk_net::resolve_bind(n.mode, &n.interfaces, &n.addresses, n.port, &all);
+        // Also retry addresses that failed to bind last time (e.g. port busy).
+        if plan != self.plan || self.bind.iter().any(|b| b.error.is_some()) {
+            self.bind = self.net.update(&plan);
+            if self.admission.same_subnet.is_some() {
+                self.admission.same_subnet = Some(glidedesk_net::interfaces::bound_ifaddrs(&plan, &all));
+            }
+            if plan != self.plan {
+                info!(addrs = ?self.net.local_addrs(), old = ?self.plan, new = ?plan, "networks changed; listening again");
+            }
+            self.plan = plan;
+        }
+        if self.note_networks(&all) {
+            self.publish();
+        }
+    }
+
+    /// Updates the "network is off" warnings; `true` when they changed.
+    fn note_networks(&mut self, all: &[glidedesk_net::NetInterface]) -> bool {
+        let n = &self.config.server.network;
+        let mut notes: Vec<String> = glidedesk_net::unavailable(n.mode, &n.interfaces, &n.addresses, all)
+            .into_iter()
+            .map(|why| format!("{NET_NOTE}: {why} — sharing continues on the other networks"))
+            .collect();
+        let failed: Vec<String> =
+            self.bind.iter().filter_map(|b| b.error.as_ref().map(|e| format!("{NET_NOTE}: {}: {e}", b.addr))).collect();
+        notes.extend(failed);
+        if self.net.local_addrs().is_empty() {
+            notes = vec![format!(
+                "{NET_NOTE}: none of the chosen networks is connected — clients can't reach this computer until one is back (Network → Listen on)"
+            )];
+        }
+        let old: Vec<&String> = self.warnings.iter().filter(|w| w.starts_with(NET_NOTE)).collect();
+        if old.len() == notes.len() && old.iter().zip(&notes).all(|(a, b)| *a == b) {
+            return false;
+        }
+        for w in &notes {
+            if !self.warnings.contains(w) {
+                warn!("{w}");
+            }
+        }
+        self.warnings.retain(|w| !w.starts_with(NET_NOTE));
+        self.warnings.extend(notes);
+        true
     }
 
     /// Drops the "why no switch" note once it's a few seconds old.
@@ -704,9 +781,9 @@ impl Hub {
         self.config.server.client(&id)
     }
 
-    fn remap_for(&self, id: DeviceId) -> Remap {
-        let slot = self.slots.get(&id);
-        let preset = slot
+    fn remap_preset_for(&self, id: DeviceId) -> Option<RemapPreset> {
+        self.slots
+            .get(&id)
             .and_then(|s| s.prefs.key_remap)
             .map(|v| match v {
                 0 => RemapPreset::Auto,
@@ -714,9 +791,24 @@ impl Hub {
                 _ => RemapPreset::None,
             })
             .or_else(|| self.entry(id).map(|e| e.key_remap))
-            .unwrap_or_default();
-        let client_platform = slot.and_then(|s| s.platform).unwrap_or(self.local_platform);
+    }
+
+    fn remap_for(&self, id: DeviceId) -> Remap {
+        let preset = self.remap_preset_for(id).unwrap_or_default();
+        let client_platform = self.slots.get(&id).and_then(|s| s.platform).unwrap_or(self.local_platform);
         Remap::new(preset, self.local_platform, client_platform)
+    }
+
+    /// Pointer speed multiplier: the client's own override, else the server's
+    /// setting for it (1.0 = same feel as on this computer).
+    fn mouse_speed_for(&self, id: DeviceId) -> f64 {
+        let prefs = self.slots.get(&id).map(|s| &s.prefs);
+        prefs
+            .and_then(|p| p.mouse_speed)
+            .map(f64::from)
+            .or_else(|| self.entry(id).map(|e| e.mouse_speed))
+            .unwrap_or(1.0)
+            .clamp(0.1, 10.0)
     }
 
     fn scroll_for(&self, id: DeviceId) -> (f64, bool) {
@@ -824,9 +916,15 @@ impl Hub {
             Some(RejectReason::RoleMismatch)
         } else if self.entry(id).is_some_and(|e| e.blocked) {
             Some(RejectReason::Blocked)
+        } else if self.forgotten.contains(&id) && !hello.features.has(glidedesk_proto::Features::REJOIN) {
+            Some(RejectReason::Forgotten)
         } else {
             None
         };
+        if reject.is_none() && self.forgotten.remove(&id) {
+            info!(client = %id, "a forgotten client joins again (its user asked)");
+            let _ = self.notice_tx.try_send(Notice::Forgotten(self.forgotten.iter().copied().collect()));
+        }
         if let Some(reason) = reject {
             info!(client = %id, ?reason, "client rejected");
             tokio::spawn(async move {
@@ -1114,6 +1212,11 @@ impl Hub {
     fn apply_config(&mut self, mut cfg: Config, removed: &[DeviceId]) {
         // A client may have joined after the agent built `cfg`: keep it.
         let kept = cfg.keep_known_clients(&self.config, removed);
+        // Forgotten clients don't come straight back when they reconnect.
+        if !removed.is_empty() {
+            self.forgotten.extend(removed.iter().copied());
+            let _ = self.notice_tx.try_send(Notice::Forgotten(self.forgotten.iter().copied().collect()));
+        }
         self.config = cfg;
         if !kept.is_empty() {
             let _ = self.notice_tx.try_send(Notice::ConfigChanged(Box::new(self.config.clone())));
@@ -1187,6 +1290,12 @@ impl Hub {
             clipboard_receive: dir != glidedesk_config::Direction::FromClients,
             clipboard_send: dir != glidedesk_config::Direction::ToClients,
             clipboard_limit: sharing.max_clipboard_bytes,
+            #[allow(clippy::cast_possible_truncation)]
+            mouse_speed: self.mouse_speed_for(id) as f32,
+            #[allow(clippy::cast_possible_truncation)]
+            scroll_speed: self.scroll_for(id).0 as f32,
+            scroll_invert: self.scroll_for(id).1,
+            key_remap: self.remap_preset_for(id).map_or(1, remap_code),
         }
     }
 
@@ -1222,16 +1331,20 @@ impl Hub {
         };
         let (allow_clip, allow_files) = (s.clipboard && s.clipboard_send, s.files && s.clipboard_send);
         let holds = self.capture.holds_paste();
-        let (events, notices, capture) = (self.event_tx.clone(), self.notice_tx.clone(), self.capture.clone());
+        let notices = self.notice_tx.clone();
         tokio::spawn(async move {
             match sync
                 .clone()
                 .receive(kind, stream, conn, Some(id), name, allow_clip, allow_files, s.clipboard_limit)
                 .await
             {
-                // This capture can't hold the paste shortcut (Linux X11): fetch right away.
+                // This capture can't hold the paste shortcut (Linux X11). Files
+                // never copy by themselves: say how to get them instead.
                 Ok(crate::sync::Received::Offer) if !holds => {
-                    fetch_and_paste(sync, None, capture, events, notices).await;
+                    if let Some(what) = sync.offer_description() {
+                        let message = format!("{what} is ready — choose \"Get them now\" in the menu to copy it here");
+                        let _ = notices.send(Notice::Info { message }).await;
+                    }
                 }
                 Ok(_) => {}
                 Err(e) => warn!(error = %e, "receiving clipboard failed"),
@@ -1301,7 +1414,13 @@ impl Hub {
                 .map(|(id, s)| Machine { id: *id, monitors: s.monitors.clone() }),
         );
         let layout = Layout::build(machines, &self.config.layout.links);
-        self.warnings.retain(|w| w.starts_with("hotkey") || w.starts_with(SECURE_INPUT_WARNING));
+        // Layout warnings are rebuilt below; the others are owned elsewhere.
+        self.warnings.retain(|w| {
+            w.starts_with("hotkey")
+                || w.starts_with(SECURE_INPUT_WARNING)
+                || w.starts_with(NET_NOTE)
+                || w.starts_with(EDGE_NOTE)
+        });
         for w in layout.warnings() {
             match w {
                 Warning::SelectionFellBack { machine, side } => {
@@ -1321,23 +1440,23 @@ impl Hub {
             }
         }
         let out = self.engine.set_layout(layout);
-        let server_units = units_per_dip(Some(self.local_platform), &self.local_monitors);
-        let states: Vec<(DeviceId, bool, f64)> = self
+        let server_units = self
+            .local_monitors
+            .iter()
+            .find(|m| m.primary)
+            .or_else(|| self.local_monitors.first())
+            .map_or(1.0, |m| units_per_dip(Some(self.local_platform), m));
+        let states: Vec<(DeviceId, bool, f64, Vec<f64>)> = self
             .slots
             .iter()
             .map(|(id, s)| {
-                let user = s
-                    .prefs
-                    .mouse_speed
-                    .map(f64::from)
-                    .or_else(|| self.config.server.client(id).map(|e| e.mouse_speed))
-                    .unwrap_or(1.0);
-                let auto = units_per_dip(s.platform, &s.monitors) / server_units;
-                (*id, s.health.state().reachable(), (user * auto).clamp(0.05, 20.0))
+                let units = unit_factors(s.platform, &s.monitors, server_units);
+                (*id, s.health.state().reachable(), self.mouse_speed_for(*id), units)
             })
             .collect();
-        for (id, reachable, speed) in states {
+        for (id, reachable, speed, units) in states {
             self.engine.set_speed(id, speed);
+            self.engine.set_units(id, units);
             let o = self.engine.set_available(id, reachable);
             self.apply(o, 0, 0);
         }
@@ -1396,6 +1515,7 @@ impl Hub {
             locked: self.engine.locked(),
             warnings: self.warnings.clone(),
             transfers: self.sync.transfers.snapshot(),
+            activity: self.sync.activity(),
             offer: self.sync.offer_description(),
         }
     }
@@ -1418,7 +1538,8 @@ async fn fetch_and_paste(
     events: mpsc::Sender<HubEvent>,
     notices: mpsc::Sender<Notice>,
 ) {
-    match sync.fetch_offer().await {
+    let why = if key.is_some() { "you pasted here" } else { "you chose Get them now" };
+    match sync.fetch_offer(why).await {
         Ok(got) => {
             if let Some(k) = key {
                 capture.replay_paste(k);

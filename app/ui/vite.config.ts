@@ -1,9 +1,11 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { agentBridge } from "./dev/agent-bridge";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  // agentBridge: dev server only, off unless GLIDEDESK_DEV_AGENTS is set (browser QA).
+  plugins: [react(), tailwindcss(), agentBridge()],
   clearScreen: false,
   build: {
     target: "es2022",

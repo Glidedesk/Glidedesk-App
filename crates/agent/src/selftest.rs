@@ -72,7 +72,7 @@ fn loopback_latency() -> Value {
                 let _ = conn.closed().await;
             }
         });
-        let Ok(ep) = glidedesk_net::client_endpoint(None, false, glidedesk_net::Tuning::default()) else {
+        let Ok(ep) = glidedesk_net::client_endpoint(None, glidedesk_net::Tuning::default()) else {
             return Value::Null;
         };
         let Ok(conn) = glidedesk_net::connect(&ep, addr).await else { return Value::Null };

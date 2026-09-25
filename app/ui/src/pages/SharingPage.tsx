@@ -1,5 +1,5 @@
 import { bytes } from "../lib/format";
-import type { AgentStatus, Config, TransferView } from "../lib/types";
+import type { ActivityView, AgentStatus, Config, TransferView } from "../lib/types";
 import { Badge, Callout, Page, Row, Section, Select, Switch } from "../components/ui";
 
 type Update = (m: (c: Config) => void, now?: boolean) => void;
@@ -18,11 +18,13 @@ export function SharingPage({ status, config, update }: { status: AgentStatus; c
   return (
     <Page title="Clipboard & Files" subtitle="Copy on one computer, paste on another — text, images and files of any size.">
       <Callout tone="info">
-        The clipboard follows the cursor: when you move to another computer, whatever you copied goes with you — text, images, and files or
-        folders of any size. Files are checked and only appear on the clipboard once complete, so Ctrl+V / Cmd+V pastes them in Explorer or
-        Finder. Cut files (Windows) are moved to the Recycle Bin / Trash on the original computer only after you paste them.
+        The clipboard follows the cursor. Text and images go with you when you move to another computer. Copied files and folders (any
+        size) are only <b>offered</b>: nothing is copied until you paste them in a folder there — then they download and your file manager
+        pastes them. Files that were already on the clipboard when Glidedesk started, or were copied over an hour ago, are not offered.
+        Everything that happens is listed under Activity below.
       </Callout>
       <Transfers list={status.server?.transfers ?? status.client?.transfers ?? []} />
+      <Activity list={status.server?.activity ?? status.client?.activity ?? []} />
       {isClient ? (
         <Section title="On this computer" description="Both sides must allow sharing. Turning it off here wins.">
           <Row label="Accept clipboard">
@@ -55,19 +57,7 @@ export function SharingPage({ status, config, update }: { status: AgentStatus; c
             </Row>
           </Section>
           <Section title="Size">
-            <Row label="Send immediately up to" hint="Smaller items are pushed right away for instant paste; bigger ones travel when you paste.">
-              <Select
-                label="Eager size"
-                value={String(s.eager_bytes)}
-                onChange={(v) => update((c) => void (c.server.sharing.eager_bytes = Number(v)), true)}
-                options={[
-                  [String(256 << 10), "256 KB"],
-                  [String(1 << 20), "1 MB"],
-                  [String(8 << 20), "8 MB"],
-                ]}
-              />
-            </Row>
-            <Row label="Largest clipboard item" hint={`Currently ${bytes(s.max_clipboard_bytes)}.`}>
+            <Row label="Largest clipboard item" hint={`Text and images bigger than this stay on their computer. Currently ${bytes(s.max_clipboard_bytes)}.`}>
               <Select label="Maximum" value={String(s.max_clipboard_bytes)} onChange={(v) => update((c) => void (c.server.sharing.max_clipboard_bytes = Number(v)), true)} options={SIZES} />
             </Row>
           </Section>
@@ -86,7 +76,7 @@ function Transfers({ list }: { list: TransferView[] }) {
         return (
           <div key={t.id} className="px-4 py-3">
             <div className="flex items-center justify-between gap-3">
-              <span className="truncate font-medium">
+              <span className="min-w-0 truncate font-medium">
                 {t.outgoing ? "→" : "←"} {t.name} <span className="text-muted">{t.outgoing ? `to ${t.peer}` : `from ${t.peer}`}</span>
               </span>
               <Badge tone={t.state === "failed" ? "bad" : t.state === "done" ? "ok" : "busy"}>
@@ -100,9 +90,33 @@ function Transfers({ list }: { list: TransferView[] }) {
               {t.done === 0 ? "0 B" : bytes(t.done)} of {t.total === 0 ? "0 B" : bytes(t.total)}
               {t.error ? ` — ${t.error}` : ""}
             </div>
+            {t.detail && <div className="mt-0.5 break-all text-[12px] text-muted">{t.detail}</div>}
           </div>
         );
       })}
+    </Section>
+  );
+}
+
+function Activity({ list }: { list: ActivityView[] }) {
+  const tone = { info: "bg-accent", ok: "bg-ok", bad: "bg-bad" } as const;
+  return (
+    <Section title="Activity" description="What the clipboard and files did recently, newest first — what moved, where and why.">
+      {list.length === 0 ? (
+        <div className="px-4 py-3 text-muted">Nothing yet. Copy something and move the cursor to another computer.</div>
+      ) : (
+        <ul aria-label="Clipboard and files activity">
+          {list.map((a, i) => (
+            <li key={`${a.at}-${i}`} className="flex gap-3 border-t border-line px-4 py-2.5 first:border-t-0">
+              <span aria-hidden className={`mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full ${tone[a.tone]}`} />
+              <span className="min-w-0 flex-1 break-words">{a.text}</span>
+              <time className="shrink-0 text-[12px] tabular-nums text-muted" dateTime={new Date(a.at * 1000).toISOString()}>
+                {new Date(a.at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </time>
+            </li>
+          ))}
+        </ul>
+      )}
     </Section>
   );
 }

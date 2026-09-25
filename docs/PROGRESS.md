@@ -141,3 +141,16 @@ To do:
 Known gaps (v3): no real Windows/Linux device test from this Mac; Windows virtual-file paste
 (Explorer's own network progress) not implemented — files arrive first, then Explorer copies
 them from staging; macOS Finder has no "cut" so cut only applies to Windows sources.
+
+## Version 4 (PLAN §15) — task tracker
+- [x] C1 IPC `seq` envelope (Forget/Block/Go there/Disconnect/Wake work again), C2 Forget sticks
+      (REJOIN), C3 window reloads after Block/Forget, offline edits sync on connect.
+- [x] C4 no automatic file fetch, stale files not offered, activity log + transfer details.
+- [x] C5 IPv4 only (schema v4), C6 per-network watch/rebind with warnings, client interface fallback.
+- [x] C7/C8 multi-monitor clients (Linux desktop refresh, per-monitor speed), protocol 3 (server
+      scroll direction, effective settings shown on the client).
+- [x] C9 Linux server XI2 grab (found in the lab), C10 responsive UI.
+- [x] Lab (`make lab`): real agents on Xvfb (client with 2 monitors) + dummy networks; browser QA
+      of all pages at 375/768/1280 px, light and dark; Lighthouse accessibility 100.
+Known gaps (v4): still no real Windows device test from this Mac; the lab covers Linux agents only
+(macOS server tested on this Mac by the user).

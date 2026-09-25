@@ -1,6 +1,6 @@
 //! Agent ⇄ UI protocol: newline-delimited JSON over a private local socket.
 //!
-//! UI → agent: `{"id": 7, "cmd": "set_locked", "locked": true}`
+//! UI → agent: `{"seq": 7, "cmd": "set_locked", "locked": true}`
 //! agent → UI: `{"type": "response", "id": 7, "ok": true, "data": …}`
 //!             `{"type": "event", "event": "status", "data": …}`
 
@@ -71,8 +71,13 @@ pub enum Request {
     FetchOffer,
 }
 
+/// A request and its sequence number. The number travels as `seq`, not `id`:
+/// requests about one computer (`forget`, `set_blocked`, `switch_to`…) carry
+/// that computer's `id`, and the two used to collide, so those requests were
+/// never understood.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RequestEnvelope {
+    #[serde(rename = "seq")]
     pub id: u64,
     #[serde(flatten)]
     pub request: Request,
@@ -137,10 +142,26 @@ mod tests {
     fn request_wire_format() {
         let r = RequestEnvelope { id: 7, request: Request::SetLocked { locked: true } };
         let s = serde_json::to_string(&r).unwrap();
-        assert_eq!(s, r#"{"id":7,"cmd":"set_locked","locked":true}"#);
+        assert_eq!(s, r#"{"seq":7,"cmd":"set_locked","locked":true}"#);
         assert_eq!(serde_json::from_str::<RequestEnvelope>(&s).unwrap(), r);
-        let bad = serde_json::from_str::<RequestEnvelope>(r#"{"id":1,"cmd":"format_disk"}"#);
+        let bad = serde_json::from_str::<RequestEnvelope>(r#"{"seq":1,"cmd":"format_disk"}"#);
         assert!(bad.is_err(), "unknown commands are rejected");
+    }
+
+    #[test]
+    fn requests_about_a_computer_survive_the_envelope() {
+        let id = DeviceId([7; 16]);
+        for request in [
+            Request::Forget { id },
+            Request::SetBlocked { id, blocked: true },
+            Request::SwitchTo { id },
+            Request::Disconnect { id },
+            Request::Wake { id },
+        ] {
+            let r = RequestEnvelope { id: 9, request };
+            let s = serde_json::to_string(&r).unwrap();
+            assert_eq!(serde_json::from_str::<RequestEnvelope>(&s).unwrap(), r, "{s}");
+        }
     }
 
     #[test]

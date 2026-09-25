@@ -5,7 +5,7 @@ RUN := docker/run.sh
 IMAGE := glidedesk-builder:latest
 CROSS_TARGETS := aarch64-apple-darwin x86_64-pc-windows-msvc
 
-.PHONY: help signing-keys docker-image sdk shell fmt lint test test-rust test-ui check-cross build-win build-mac build-linux release clean
+.PHONY: help signing-keys docker-image sdk shell fmt lint test test-rust test-ui check-cross build-win build-mac build-linux release clean lab lab-stop
 
 help:
 	@echo "make docker-image  build the builder image"
@@ -61,3 +61,16 @@ release:
 clean:
 	$(RUN) cargo clean
 	rm -rf output-build/*
+
+# Real end-to-end lab: server + two Linux clients (one with two monitors) on virtual X screens and
+# dummy networks, settings UI at http://localhost:5173/?agent=server (client-a, client-b).
+lab:
+	$(RUN) cargo build -p glidedesk-app
+	docker build -q -t glidedesk-lab -f docker/lab/Dockerfile docker/lab
+	docker rm -f gd-lab >/dev/null 2>&1 || true
+	docker run -d --name gd-lab --cap-add NET_ADMIN -p 127.0.0.1:5173:5173 -v "$(CURDIR):/src" \
+	  -v gd-cargo-registry:/usr/local/cargo/registry -v gd-cargo-git:/usr/local/cargo/git -v gd-cache:/cache \
+	  -w /src glidedesk-lab:latest sh -c 'cd app/ui && pnpm install --frozen-lockfile >/dev/null 2>&1; /src/docker/lab/lab.sh && sleep infinity'
+
+lab-stop:
+	docker rm -f gd-lab

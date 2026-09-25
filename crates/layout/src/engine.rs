@@ -241,6 +241,10 @@ pub struct Engine {
     locked: bool,
     unavailable: HashSet<DeviceId>,
     speed: HashMap<DeviceId, f64>,
+    /// Per-monitor unit factor of a machine (same order as its monitors):
+    /// how many of its pixels match one of ours, so a mixed-DPI desktop
+    /// feels the same on every screen.
+    units: HashMap<DeviceId, Vec<f64>>,
     remainder: (f64, f64),
     /// (from, to) → segment of `from`'s run the cursor last left through.
     last_exit: HashMap<(DeviceId, DeviceId), usize>,
@@ -260,6 +264,7 @@ impl Engine {
             locked: false,
             unavailable: HashSet::new(),
             speed: HashMap::new(),
+            units: HashMap::new(),
             remainder: (0.0, 0.0),
             last_exit: HashMap::new(),
             local_pos: Point::default(),
@@ -314,11 +319,31 @@ impl Engine {
         self.locked
     }
 
-    /// Pointer speed multiplier for a client (auto DPI factor × user setting).
+    /// Pointer speed multiplier for a client (the user's setting).
     pub fn set_speed(&mut self, machine: DeviceId, speed: f64) {
         if speed.is_finite() && speed > 0.0 {
             self.speed.insert(machine, speed);
         }
+    }
+
+    /// Per-monitor pixel factors of a client, in the order of its monitors
+    /// (e.g. 1.5 on a Windows screen at 150 %). Invalid values count as 1.
+    pub fn set_units(&mut self, machine: DeviceId, factors: Vec<f64>) {
+        let clean =
+            factors.into_iter().map(|f| if f.is_finite() && f > 0.0 { f.clamp(0.1, 10.0) } else { 1.0 }).collect();
+        self.units.insert(machine, clean);
+    }
+
+    /// Speed at `pos` on `machine`: the user's multiplier × the factor of the
+    /// monitor the cursor is on.
+    fn speed_at(&self, machine: DeviceId, mons: &[MonitorInfo], pos: Point) -> f64 {
+        let user = self.speed.get(&machine).copied().unwrap_or(1.0);
+        let unit = mons
+            .iter()
+            .position(|m| m.bounds.contains(pos))
+            .and_then(|i| self.units.get(&machine).and_then(|u| u.get(i)).copied())
+            .unwrap_or(1.0);
+        user * unit
     }
 
     /// Mark a client online/offline. Offline clients are walls; if the active
@@ -398,7 +423,7 @@ impl Engine {
     pub fn on_remote_move(&mut self, dx: i32, dy: i32, ctx: EdgeContext) -> Outcome {
         let Focus::Remote { machine, pos } = self.focus else { return Outcome::None };
         let Some(mons) = self.layout.monitors(&machine) else { return self.go_home(machine) };
-        let speed = self.speed.get(&machine).copied().unwrap_or(1.0);
+        let speed = self.speed_at(machine, mons, pos);
         let fx = f64::from(dx) * speed + self.remainder.0;
         let fy = f64::from(dy) * speed + self.remainder.1;
         let (ix, iy) = (fx.trunc(), fy.trunc());

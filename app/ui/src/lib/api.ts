@@ -5,10 +5,11 @@ import type { AgentStatus, Config, DeviceId, ImportPreview, NetInterface, Notice
 
 type Req = Record<string, unknown> & { cmd: string };
 
-const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+// Checked per call: in `vite dev` the browser shim installs the runtime after load.
+const inTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export async function agent<T = unknown>(req: Req): Promise<T> {
-  if (!inTauri) throw new Error("Glidedesk UI must run inside the app");
+  if (!inTauri()) throw new Error("Glidedesk UI must run inside the app");
   return invoke<T>("agent", { request: req });
 }
 

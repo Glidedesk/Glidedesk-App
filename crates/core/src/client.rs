@@ -105,6 +105,21 @@ fn spawn_injector(mut inj: Box<dyn Injector>) -> std::sync::mpsc::Sender<InjectC
     tx
 }
 
+/// What the server applies here, for the window.
+fn applied(s: &ClientSettings) -> glidedesk_ipc::views::AppliedView {
+    glidedesk_ipc::views::AppliedView {
+        mouse_speed: s.mouse_speed,
+        scroll_speed: s.scroll_speed,
+        scroll_invert: s.scroll_invert,
+        key_remap: match s.key_remap {
+            0 => "auto",
+            2 => "swap-ctrl-meta",
+            _ => "none",
+        }
+        .into(),
+    }
+}
+
 fn prefs(cfg: &Config) -> ClientPrefs {
     let c = &cfg.client;
     #[allow(clippy::cast_possible_truncation)]
@@ -124,7 +139,7 @@ fn prefs(cfg: &Config) -> ClientPrefs {
     }
 }
 
-/// Splits `name[:port]` (a bare IPv6 address has several colons: no port).
+/// Splits `name[:port]`.
 fn split_port(a: &str) -> (&str, Option<u16>) {
     match a.rsplit_once(':') {
         Some((host, p)) if !host.contains(':') => p.parse().map_or((a, None), |p| (host, Some(p))),
@@ -132,22 +147,28 @@ fn split_port(a: &str) -> (&str, Option<u16>) {
     }
 }
 
+/// IPv4 addresses only (Glidedesk runs on IPv4).
 async fn dns(host: &str, port: u16) -> Option<Vec<SocketAddr>> {
-    let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, port)).await.ok()?.collect();
+    let addrs: Vec<SocketAddr> =
+        tokio::net::lookup_host((host, port)).await.ok()?.filter(SocketAddr::is_ipv4).collect();
     (!addrs.is_empty()).then_some(addrs)
 }
 
-/// Resolves what the user typed as the server (§14 B3): an IP (`ip`, `ip:port`,
-/// `[v6]:port`), or a **computer name** — matched against Glidedesk servers
-/// announced on the network (display or computer name), then `name.local`
-/// (mDNS) and DNS. Whichever answers first wins.
+/// Resolves what the user typed as the server (§14 B3): an IPv4 address
+/// (`ip`, `ip:port`), or a **computer name** — matched against Glidedesk
+/// servers announced on the network (display or computer name), then
+/// `name.local` (mDNS) and DNS. Whichever answers first wins. IPv4 only.
 async fn resolve(address: &str, interface: &str) -> Result<Vec<SocketAddr>, CoreError> {
     let a = address.trim();
+    let ip_only = a.trim_start_matches('[').split(']').next().unwrap_or(a);
+    if a.parse::<SocketAddr>().is_ok_and(|sa| sa.is_ipv6()) || ip_only.parse::<std::net::Ipv6Addr>().is_ok() {
+        return Err(CoreError::Net(format!("'{a}' is an IPv6 address; Glidedesk uses IPv4 only")));
+    }
     if let Ok(sa) = a.parse::<SocketAddr>() {
         return Ok(vec![sa]);
     }
-    if let Ok(ip) = a.trim_matches(['[', ']']).parse::<IpAddr>() {
-        return Ok(vec![SocketAddr::new(ip, DEFAULT_PORT)]);
+    if let Ok(ip) = a.parse::<std::net::Ipv4Addr>() {
+        return Ok(vec![SocketAddr::new(IpAddr::V4(ip), DEFAULT_PORT)]);
     }
     let (host, port) = split_port(a);
     if host.is_empty() || host.len() > 253 || host.chars().any(|c| c.is_control() || c.is_whitespace()) {
@@ -185,16 +206,30 @@ async fn resolve(address: &str, interface: &str) -> Result<Vec<SocketAddr>, Core
     }
 }
 
-/// IP of the chosen local interface, if the user picked one.
-fn bind_ip(cfg: &Config, want_v6: bool) -> Option<IpAddr> {
+/// The interface to use: the chosen one while it is up with an IPv4 address;
+/// otherwise any (`""`) and a note saying why, so the link keeps working.
+fn usable_interface(cfg: &Config) -> (String, Option<String>) {
     let name = cfg.client.interface.trim();
     if name.is_empty() {
+        return (String::new(), None);
+    }
+    let all = glidedesk_net::list_interfaces();
+    match all.iter().find(|i| i.name == name) {
+        Some(i) if i.up && i.addrs.iter().any(|a| a.ip.is_ipv4()) => (name.to_owned(), None),
+        Some(i) => (String::new(), Some(format!("{} ({name}) is off — using any network", i.friendly_name))),
+        None => (String::new(), Some(format!("network {name} is not connected — using any network"))),
+    }
+}
+
+/// IPv4 address of `interface` (`""` = any).
+fn bind_ip(interface: &str) -> Option<IpAddr> {
+    if interface.is_empty() {
         return None;
     }
     glidedesk_net::list_interfaces()
         .into_iter()
-        .find(|i| i.name == name)
-        .and_then(|i| i.addrs.into_iter().map(|a| a.ip).find(|ip| ip.is_ipv6() == want_v6 && !ip.is_loopback()))
+        .find(|i| i.name == interface)
+        .and_then(|i| i.addrs.into_iter().map(|a| a.ip).find(|ip| ip.is_ipv4() && !ip.is_loopback()))
 }
 
 /// Reads frames on its own task until the stream ends or fails; the last item is
@@ -237,6 +272,9 @@ fn reject_text(r: RejectReason) -> String {
         RejectReason::WrongPassword => "wrong password — check it under Server".into(),
         RejectReason::PasswordRequired => "the server needs a password — enter it under Server".into(),
         RejectReason::TooManyAttempts => "too many wrong passwords; the server blocks this computer for a while".into(),
+        RejectReason::Forgotten => {
+            "the server removed this computer (Forget) — press Reconnect to join it again".into()
+        }
     }
 }
 
@@ -254,6 +292,8 @@ struct Runner {
     sync: std::sync::Arc<crate::sync::Sync>,
     /// Clipboard sequence last sent to the server.
     last_sent: Option<u64>,
+    /// The user pressed Reconnect: join even if the server forgot us.
+    rejoin: bool,
 }
 
 async fn run(
@@ -277,6 +317,7 @@ async fn run(
         monitors,
         sync: crate::sync::Sync::new(deps.clipboard),
         last_sent: None,
+        rejoin: false,
     };
     let mut backoff = BACKOFF_MIN;
     loop {
@@ -289,14 +330,22 @@ async fn run(
                 backoff = BACKOFF_MIN;
                 continue;
             }
-            SessionEnd::Command(ClientCommand::Reconnect | ClientCommand::FetchOffer) => {
+            SessionEnd::Command(ClientCommand::Reconnect) => {
+                r.rejoin = true;
+                backoff = BACKOFF_MIN;
+                continue;
+            }
+            SessionEnd::Command(ClientCommand::FetchOffer) => {
                 backoff = BACKOFF_MIN;
                 continue;
             }
             SessionEnd::Rejected(reason)
                 if matches!(
                     reason,
-                    RejectReason::WrongPassword | RejectReason::PasswordRequired | RejectReason::TooManyAttempts
+                    RejectReason::WrongPassword
+                        | RejectReason::PasswordRequired
+                        | RejectReason::TooManyAttempts
+                        | RejectReason::Forgotten
                 ) =>
             {
                 let text = reject_text(reason);
@@ -349,7 +398,8 @@ async fn run(
             cmd = cmds.recv() => match cmd {
                 Some(ClientCommand::Shutdown(_)) | None => break,
                 Some(ClientCommand::ApplyConfig(c)) => r.config = *c,
-                Some(ClientCommand::Reconnect | ClientCommand::FetchOffer) => {}
+                Some(ClientCommand::Reconnect) => r.rejoin = true,
+                Some(ClientCommand::FetchOffer) => {}
             }
         }
         backoff = (backoff * 2).min(BACKOFF_MAX);
@@ -378,7 +428,10 @@ impl Runner {
                     self.config = *c;
                     return true;
                 }
-                Some(ClientCommand::Reconnect) => return true,
+                Some(ClientCommand::Reconnect) => {
+                    self.rejoin = true;
+                    return true;
+                }
                 Some(ClientCommand::FetchOffer) => {} // not connected: nothing to fetch
                 Some(ClientCommand::Shutdown(_)) | None => return false,
             }
@@ -390,6 +443,7 @@ impl Runner {
             f(v);
             v.local =
                 MachineView { id: Some(self.config.device.id), name: self.name(), monitors: self.monitors.clone() };
+            v.activity = self.sync.activity();
         });
     }
 
@@ -399,13 +453,17 @@ impl Runner {
 
     /// Finds candidate server addresses (configured or via mDNS).
     async fn find_server(&mut self, cmds: &mut mpsc::Receiver<ClientCommand>) -> Result<Vec<SocketAddr>, SessionEnd> {
+        let (interface, note) = usable_interface(&self.config);
+        if let Some(n) = &note {
+            warn!("{n}");
+        }
         let configured = self.config.client.server_address.trim().to_owned();
         if !configured.is_empty() {
             self.update(|v| {
                 v.state = LinkState::Connecting;
                 v.server_address = Some(configured.clone());
+                v.message.clone_from(&note);
             });
-            let interface = self.config.client.interface.clone();
             return tokio::select! {
                 r = resolve(&configured, &interface) => r.map_err(|e| SessionEnd::Lost(e.to_string())),
                 cmd = cmds.recv() => Err(SessionEnd::Command(cmd.unwrap_or(ClientCommand::Shutdown(GoodbyeReason::Stopping)))),
@@ -413,9 +471,9 @@ impl Runner {
         }
         self.update(|v| {
             v.state = LinkState::Searching;
-            v.message = None;
+            v.message.clone_from(&note);
         });
-        let (_browser, mut rx) = Browser::start(Some(self.config.client.interface.as_str()))
+        let (_browser, mut rx) = Browser::start(Some(interface.as_str()))
             .map_err(|e| SessionEnd::Lost(format!("discovery unavailable: {e}")))?;
         let deadline = tokio::time::sleep(Duration::from_secs(10));
         tokio::pin!(deadline);
@@ -443,15 +501,15 @@ impl Runner {
 
     async fn connect(&self, addrs: &[SocketAddr]) -> Result<(quinn::Endpoint, quinn::Connection, SocketAddr), String> {
         let tuning = Tuning::default();
-        let mut last_err = String::from("no address");
-        // IPv4 only unless IPv6 is on (or only IPv6 addresses exist, e.g. one was typed).
-        let v4_only = !self.config.client.ipv6 && addrs.iter().any(SocketAddr::is_ipv4);
-        let mut ordered: Vec<SocketAddr> = addrs.iter().copied().filter(|a| !v4_only || a.is_ipv4()).collect();
-        // Prefer IPv4 then IPv6; link-local last.
-        ordered.sort_by_key(|a| (a.is_ipv6(), matches!(a.ip(), IpAddr::V6(v6) if v6.is_unicast_link_local())));
+        let (interface, _) = usable_interface(&self.config);
+        let ordered: Vec<SocketAddr> = addrs.iter().copied().filter(SocketAddr::is_ipv4).collect();
+        let mut last_err = if ordered.is_empty() {
+            String::from("the server has no IPv4 address (Glidedesk uses IPv4 only)")
+        } else {
+            String::from("no address")
+        };
         for addr in ordered {
-            let ep = match glidedesk_net::client_endpoint(bind_ip(&self.config, addr.is_ipv6()), addr.is_ipv6(), tuning)
-            {
+            let ep = match glidedesk_net::client_endpoint(bind_ip(&interface), tuning) {
                 Ok(ep) => ep,
                 Err(e) => {
                     last_err = e.to_string();
@@ -475,7 +533,10 @@ impl Runner {
             name: self.name(),
             platform: Platform::current(),
             monitors: self.monitors.clone(),
-            features: Features::default().with(Features::LED_SYNC).with(Features::DRAW_CURSOR),
+            features: {
+                let f = Features::default().with(Features::LED_SYNC).with(Features::DRAW_CURSOR);
+                if self.rejoin { f.with(Features::REJOIN) } else { f }
+            },
             prefs: prefs(&self.config),
         }
     }
@@ -536,7 +597,7 @@ impl Runner {
                 let (sync, inject, taken, notices) =
                     (self.sync.clone(), self.inject.clone(), taken.clone(), self.notices.clone());
                 tokio::spawn(async move {
-                    match sync.fetch_offer().await {
+                    match sync.fetch_offer("you pasted here").await {
                         Ok(got) => {
                             for (k, down) in replay {
                                 let _ = inject.send(InjectCmd::Input(Input::Key { key: k, down }));
@@ -656,6 +717,7 @@ impl Runner {
         let mut offer_watch = self.sync.hold_watch();
         self.preferred = Some(welcome.device_id);
         self.last_sent = None;
+        self.rejoin = false;
         let server_name: String = welcome.name.chars().filter(|c| !c.is_control()).take(64).collect();
         info!(server = %server_name, %addr, "connected");
         let _ = self.notices.try_send(Notice::ServerConnected { id: welcome.device_id, name: server_name.clone() });
@@ -667,7 +729,9 @@ impl Runner {
             v.server_version = Some(welcome.app_version.chars().take(32).collect());
             v.clipboard = settings.clipboard;
             v.files = settings.files;
-            v.message = None;
+            v.applied = Some(applied(&settings));
+            // Still say so when the chosen network is off (we use another one).
+            v.message = usable_interface(&self.config).1;
         });
 
         let mut monitor_poll = tokio::time::interval(MONITOR_POLL);
@@ -760,6 +824,7 @@ impl Runner {
                         self.update(|v| {
                             v.clipboard = settings.clipboard;
                             v.files = settings.files;
+                            v.applied = Some(applied(&settings));
                         });
                     }
                     Ok(Some(Control::Identify { label })) => {
@@ -772,6 +837,9 @@ impl Runner {
                     Err(e) => return SessionEnd::Lost(e.to_string()),
                 },
                 _ = monitor_poll.tick() => {
+                    let sync = self.sync.clone();
+                    tokio::task::spawn_blocking(move || sync.observe());
+                    self.update(|_| {}); // refreshes the activity log
                     if let Ok(m) = (self.deps_monitors)()
                         && m != self.monitors
                     {
@@ -793,8 +861,7 @@ impl Runner {
                         ClientCommand::ApplyConfig(c) => {
                             let address_changed = c.client.server_address != self.config.client.server_address
                                 || c.client.interface != self.config.client.interface
-                                || c.client.password != self.config.client.password
-                                || c.client.ipv6 != self.config.client.ipv6;
+                                || c.client.password != self.config.client.password;
                             self.config = *c;
                             if address_changed {
                                 let _ = control.send(&Control::Goodbye(GoodbyeReason::Restarting)).await;
@@ -814,7 +881,7 @@ impl Runner {
                         ClientCommand::FetchOffer => {
                             let (sync, taken, notices) = (self.sync.clone(), taken_tx.clone(), self.notices.clone());
                             tokio::spawn(async move {
-                                match sync.fetch_offer().await {
+                                match sync.fetch_offer("you chose Get them now").await {
                                     Ok(Some(files)) if files.cut => {
                                         if crate::sync::wait_taken(files.roots).await {
                                             let _ = taken.send(files.set).await;
@@ -844,19 +911,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn port_split_handles_names_and_ipv6() {
+    fn port_split_handles_names() {
         assert_eq!(split_port("office-pc"), ("office-pc", None));
         assert_eq!(split_port("office-pc:9000"), ("office-pc", Some(9000)));
-        assert_eq!(split_port("fe80::1"), ("fe80::1", None));
         assert_eq!(split_port("name:notaport"), ("name:notaport", None));
     }
 
     #[tokio::test]
-    async fn ip_addresses_resolve_without_lookups() {
+    async fn ip_addresses_resolve_without_lookups_and_ipv6_is_refused() {
         let a = resolve("192.168.1.20", "").await.unwrap();
         assert_eq!(a, vec![SocketAddr::new("192.168.1.20".parse().unwrap(), DEFAULT_PORT)]);
-        let b = resolve("[fe80::1]:9000", "").await.unwrap();
+        let b = resolve("192.168.1.20:9000", "").await.unwrap();
         assert_eq!(b[0].port(), 9000);
+        for v6 in ["fe80::1", "[fe80::1]:9000", "::1"] {
+            let e = resolve(v6, "").await.unwrap_err().to_string();
+            assert!(e.contains("IPv4 only"), "{v6}: {e}");
+        }
         assert!(resolve("bad name", "").await.is_err());
+    }
+
+    #[test]
+    fn a_chosen_interface_that_does_not_exist_falls_back_to_any() {
+        let mut cfg = Config::default();
+        cfg.client.interface = "gd-no-such-if0".into();
+        let (iface, note) = usable_interface(&cfg);
+        assert_eq!(iface, "");
+        assert!(note.unwrap().contains("using any network"));
     }
 }

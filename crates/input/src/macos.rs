@@ -115,26 +115,6 @@ fn repin(p: Point) {
     let _ = CGAssociateMouseAndMouseCursorPosition(false);
 }
 
-/// macOS "natural" scrolling (System Settings → Mouse/Trackpad). Scroll is sent
-/// between computers in *device* direction (wheel away from you = up, as on a
-/// PC); each Mac turns it natural again on its own side, so every computer
-/// scrolls the way it is set up (§14 B8). Cached; re-read every few seconds.
-fn natural_scrolling() -> bool {
-    use std::sync::atomic::AtomicU64;
-    static VALUE: AtomicBool = AtomicBool::new(true);
-    static READ_AT: AtomicU64 = AtomicU64::new(0);
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    if now.saturating_sub(READ_AT.load(Ordering::Relaxed)) >= 5 {
-        READ_AT.store(now, Ordering::Relaxed);
-        let defaults = objc2_foundation::NSUserDefaults::standardUserDefaults();
-        let key = objc2_foundation::NSString::from_str("com.apple.swipescrolldirection");
-        // Missing key = the system default, which is natural scrolling on.
-        let on = defaults.objectForKey(&key).is_none() || defaults.boolForKey(&key);
-        VALUE.store(on, Ordering::Relaxed);
-    }
-    VALUE.load(Ordering::Relaxed)
-}
-
 /// The hidden cursor is pulled back to the pin only when it comes this close
 /// (points) to an edge of the pinned screen: every pull costs a warp, so it
 /// should be rare — just enough that the cursor never reaches an edge and stops
@@ -512,9 +492,8 @@ unsafe extern "C-unwind" fn tap_callback(
                     fixed(CGEventField::ScrollWheelEventFixedPtDeltaAxis2),
                 )
             };
-            // Natural scrolling inverted these before the tap saw them: undo it.
-            let sign = if natural_scrolling() { -1.0 } else { 1.0 };
-            let (dx, dy) = (dx * sign, dy * sign);
+            // Sent as seen here — natural scrolling already applied — so other
+            // computers scroll the way this one does (protocol 3).
             if dx != 0.0 || dy != 0.0 {
                 shared.emit(CaptureEvent::Wheel { dx: dx.round() as i32, dy: dy.round() as i32 });
             }
@@ -778,10 +757,10 @@ impl MacInjector {
 
     #[allow(clippy::cast_possible_truncation)]
     fn wheel(&mut self, dx: i32, dy: i32) -> Result<(), InputError> {
-        // Posted events skip the system's natural-scrolling inversion: apply it here.
-        let sign = if natural_scrolling() { -1.0 } else { 1.0 };
-        let fx = f64::from(dx) * sign / UNITS_PER_PIXEL + self.wheel_rem.0;
-        let fy = f64::from(dy) * sign / UNITS_PER_PIXEL + self.wheel_rem.1;
+        // Already in the server's scrolling direction; posted events skip this
+        // Mac's natural-scrolling inversion, so it scrolls like the server.
+        let fx = f64::from(dx) / UNITS_PER_PIXEL + self.wheel_rem.0;
+        let fy = f64::from(dy) / UNITS_PER_PIXEL + self.wheel_rem.1;
         let (px, py) = (fx.trunc(), fy.trunc());
         self.wheel_rem = (fx - px, fy - py);
         if px == 0.0 && py == 0.0 {

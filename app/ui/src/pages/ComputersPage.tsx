@@ -18,13 +18,13 @@ function ClientSettings({ entry, update }: { entry: ClientEntry; update: Update 
   return (
     <>
       <Section title="Pointer">
-        <Row label="Mouse speed" hint="Multiplies the automatic speed matching between screens.">
+        <Row label="Mouse speed" hint="1× feels like on this computer (screen sizes and scaling are matched automatically, per screen).">
           <NumberInput label="Mouse speed" value={entry.mouse_speed} min={0.1} max={10} step={0.1} unit="×" onChange={(v) => set("mouse_speed", v)} />
         </Row>
         <Row label="Scroll speed">
           <NumberInput label="Scroll speed" value={entry.scroll_speed} min={0.1} max={10} step={0.1} unit="×" onChange={(v) => set("scroll_speed", v)} />
         </Row>
-        <Row label="Reverse scrolling" hint="Scrolling already follows each computer's own setting (e.g. natural scrolling on a Mac). Turn on only to flip it for this computer.">
+        <Row label="Reverse scrolling" hint="Scrolling goes the same way as on this computer (natural scrolling included). Turn on to flip it for that computer.">
           <Switch label="Reverse scrolling" checked={entry.scroll_invert} onChange={(v) => set("scroll_invert", v)} />
         </Row>
         <Row label="Relative mouse (games)" hint="Sends movement instead of positions. Use for full-screen games.">
@@ -58,7 +58,7 @@ function ClientSettings({ entry, update }: { entry: ClientEntry; update: Update 
       </Section>
       <Section title="Wake-on-LAN">
         <Row label="MAC address" hint="Lets you wake this computer from the tray when it is offline.">
-          <TextInput label="MAC address" value={entry.mac_address} placeholder="aa:bb:cc:dd:ee:ff" width="w-48" invalid={!macOk} onChange={(v) => set("mac_address", v.trim())} />
+          <TextInput label="MAC address" width="w-full sm:w-48" value={entry.mac_address} placeholder="aa:bb:cc:dd:ee:ff" invalid={!macOk} onChange={(v) => set("mac_address", v.trim())} />
         </Row>
       </Section>
     </>
@@ -85,7 +85,7 @@ export function ComputersPage({ status, config, update }: { status: AgentStatus;
           this screen.
         </EmptyState>
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,300px),1fr))] gap-4">
           {rows.map((c) => {
             const v = views.find((x) => x.id === c.id);
             const state = v?.state ?? "never-connected";
@@ -146,7 +146,14 @@ export function ComputersPage({ status, config, update }: { status: AgentStatus;
         footer={
           entry && (
             <>
-              <Button variant="danger" onClick={() => void run(() => api.forget(entry.id), `${entry.name} removed`).then((ok) => ok && setOpen(null))}>
+              <Button
+                variant="danger"
+                onClick={() =>
+                  void run(() => api.forget(entry.id), `${entry.name} removed. It joins again only if someone presses Reconnect on it.`).then(
+                    (ok) => ok && setOpen(null),
+                  )
+                }
+              >
                 Forget
               </Button>
               <Button variant="danger" onClick={() => void run(() => api.setBlocked(entry.id, !entry.blocked))}>
@@ -160,7 +167,14 @@ export function ComputersPage({ status, config, update }: { status: AgentStatus;
           )
         }
       >
-        {entry && <ClientSettings entry={entry} update={update} />}
+        {entry && (
+        <>
+          {!views.some((v) => v.id === entry.id && ["online", "degraded", "locked"].includes(v.state)) && (
+            <p className="mb-3 text-[12.5px] text-muted">{entry.name} is offline — changes are saved now and apply when it connects.</p>
+          )}
+          <ClientSettings entry={entry} update={update} />
+        </>
+      )}
       </Modal>
     </Page>
   );

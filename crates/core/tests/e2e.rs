@@ -83,6 +83,7 @@ async fn full_session() {
             capture,
             monitors: source(monitor(1000, 500)),
             known_monitors: HashMap::new(),
+            forgotten: std::collections::HashSet::new(),
             app_version: "test".into(),
             host_name: "server-host".into(),
             clipboard: None,
@@ -176,6 +177,7 @@ async fn silent_client_goes_offline_by_heartbeat() {
             capture,
             monitors: source(monitor(800, 600)),
             known_monitors: HashMap::new(),
+            forgotten: std::collections::HashSet::new(),
             app_version: "test".into(),
             host_name: "s".into(),
             clipboard: None,
@@ -186,7 +188,7 @@ async fn silent_client_goes_offline_by_heartbeat() {
     let addr: std::net::SocketAddr = wait_for(&mut st, "running", |v| v.running).await.bind[0].addr.parse().unwrap();
 
     // A raw peer that says hello and then never answers pings.
-    let ep = glidedesk_net::client_endpoint(None, false, glidedesk_net::Tuning::default()).unwrap();
+    let ep = glidedesk_net::client_endpoint(None, glidedesk_net::Tuning::default()).unwrap();
     let conn = glidedesk_net::connect(&ep, addr).await.unwrap();
     let (send, recv) = conn.open_bi().await.unwrap();
     let mut w = glidedesk_net::FrameWriter::new(send, glidedesk_proto::MAX_CONTROL_FRAME);
@@ -226,6 +228,7 @@ async fn clipboard_and_files_follow_the_cursor() {
             capture,
             monitors: source(monitor(1000, 500)),
             known_monitors: HashMap::new(),
+            forgotten: std::collections::HashSet::new(),
             app_version: "test".into(),
             host_name: "s".into(),
             clipboard: Some(Box::new(server_clip.clone())),
@@ -301,6 +304,16 @@ async fn clipboard_and_files_follow_the_cursor() {
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(client_clip.contents().files.is_empty(), "files must not copy by themselves");
     assert!(srv.status.borrow().transfers.is_empty(), "no transfer before a paste");
+
+    //    Going back without pasting must not download them either (they used to
+    //    be fetched so they could be passed on).
+    cap_tx.send(CaptureEvent::Motion { pos: Point::new(999, 100), dx: -10, dy: 0 }).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert!(srv.status.borrow().transfers.is_empty(), "returning must not fetch offered files");
+    assert!(!server_clip.contents().files.is_empty(), "server clipboard untouched");
+    assert!(client_clip.contents().files.is_empty());
+    cap_tx.send(CaptureEvent::Motion { pos: Point::new(999, 100), dx: 5, dy: 0 }).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
 
     //    The user pastes on the client (Ctrl+V on this test's OS): the V press is
     //    held, the files arrive, then the paste is replayed.
@@ -380,6 +393,7 @@ async fn password_protects_the_server() {
         capture,
         monitors: source(monitor(1000, 500)),
         known_monitors: HashMap::new(),
+        forgotten: std::collections::HashSet::new(),
         app_version: "test".into(),
         host_name: "server-host".into(),
         clipboard: None,
@@ -428,6 +442,7 @@ async fn password_protects_the_server() {
             capture,
             monitors: source(monitor(1000, 500)),
             known_monitors: HashMap::new(),
+            forgotten: std::collections::HashSet::new(),
             app_version: "test".into(),
             host_name: "server-host".into(),
             clipboard: None,
@@ -442,4 +457,82 @@ async fn password_protects_the_server() {
     let v = wait_for(&mut cs, "refuses open server", |v| v.state == LinkState::Rejected).await;
     assert!(v.message.unwrap_or_default().contains("doesn't use one"));
     open.commands.send(ServerCommand::Shutdown(GoodbyeReason::Stopping)).await.unwrap();
+}
+
+/// "Forget" sticks: the client is refused (not re-added) until its user
+/// presses Reconnect. Files that were already copied when the server
+/// started are not offered.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn forget_sticks_until_reconnect_and_old_files_are_not_offered() {
+    use glidedesk_clipboard::ClipData;
+    use glidedesk_clipboard::mock::MockClipboard;
+
+    let old = tempfile::tempdir().unwrap();
+    let file = old.path().join("old.txt");
+    std::fs::write(&file, b"old").unwrap();
+    let server_clip = MockClipboard::default();
+    server_clip.set_external(ClipData { files: vec![file], ..Default::default() });
+    let client_clip = MockClipboard::default();
+    client_clip.set_external(ClipData { text: Some("mine".into()), ..Default::default() });
+
+    let (capture, cap_tx, _cap_ctl) = mock::capture();
+    let scfg = server_config();
+    let srv = server::start(
+        scfg.clone(),
+        ServerDeps {
+            capture,
+            monitors: source(monitor(1000, 500)),
+            known_monitors: HashMap::new(),
+            forgotten: std::collections::HashSet::new(),
+            app_version: "test".into(),
+            host_name: "s".into(),
+            clipboard: Some(Box::new(server_clip.clone())),
+        },
+    )
+    .unwrap();
+    let mut st = srv.status.clone();
+    let addr = wait_for(&mut st, "running", |v| v.running).await.bind[0].addr.clone();
+    let mut ccfg = Config::default();
+    ccfg.device.id = CLIENT_ID;
+    ccfg.device.role = Role::Client;
+    ccfg.client.server_address = addr;
+    let cli = client::start(
+        ccfg,
+        ClientDeps {
+            injector: Box::new(MockInjector::default()),
+            monitors: source(monitor(800, 600)),
+            status: Arc::new(glidedesk_proto::ClientStatus::default),
+            app_version: "test".into(),
+            host_name: "c".into(),
+            preferred_server: None,
+            clipboard: Some(Box::new(client_clip.clone())),
+        },
+    );
+    wait_for(&mut st, "online", |v| v.clients.iter().any(|c| c.state == HealthState::Online)).await;
+
+    // Old files: entering the client offers nothing and leaves its clipboard alone.
+    cap_tx.send(CaptureEvent::Motion { pos: Point::new(999, 100), dx: 5, dy: 0 }).await.unwrap();
+    let v = wait_for(&mut st, "not-offered note", |v| v.activity.iter().any(|a| a.text.contains("not offered"))).await;
+    assert!(v.activity[0].text.contains("already on the clipboard when Glidedesk started"), "{:?}", v.activity);
+    assert_eq!(client_clip.contents().text.as_deref(), Some("mine"));
+    cap_tx.send(CaptureEvent::Motion { pos: Point::new(999, 100), dx: -10, dy: 0 }).await.unwrap();
+
+    // Forget: removed from the settings, refused on reconnect, not re-added.
+    let mut forgot = scfg.clone();
+    forgot.server.clients.retain(|c| c.id != CLIENT_ID);
+    forgot.layout.links.clear();
+    srv.commands.send(ServerCommand::ApplyConfig { config: Box::new(forgot), removed: vec![CLIENT_ID] }).await.unwrap();
+    let mut cs = cli.status.clone();
+    let v = wait_for(&mut cs, "refused after forget", |v| v.state == LinkState::Rejected).await;
+    assert!(v.message.unwrap_or_default().contains("Reconnect"));
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert!(st.borrow().clients.iter().all(|c| c.id != CLIENT_ID), "a forgotten client came back by itself");
+
+    // The client's user presses Reconnect: it joins again.
+    cli.commands.send(glidedesk_core::ClientCommand::Reconnect).await.unwrap();
+    wait_for(&mut cs, "rejoined", |v| v.state == LinkState::Connected).await;
+    wait_for(&mut st, "listed again", |v| v.clients.iter().any(|c| c.id == CLIENT_ID)).await;
+
+    cli.commands.send(glidedesk_core::ClientCommand::Shutdown(GoodbyeReason::Quitting)).await.unwrap();
+    srv.commands.send(ServerCommand::Shutdown(GoodbyeReason::Stopping)).await.unwrap();
 }

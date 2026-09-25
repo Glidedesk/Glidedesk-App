@@ -66,7 +66,13 @@ async fn connection(
                 let env: RequestEnvelope = match serde_json::from_slice(&buf) {
                     Ok(e) => e,
                     Err(e) => {
-                        let _ = out_tx.send(Message::err(0, format!("bad request: {e}"))).await;
+                        // Answer under the caller's number so it gets the error
+                        // instead of waiting forever.
+                        let seq = serde_json::from_slice::<Value>(&buf)
+                            .ok()
+                            .and_then(|v| v.get("seq").and_then(Value::as_u64))
+                            .unwrap_or(0);
+                        let _ = out_tx.send(Message::err(seq, format!("bad request: {e}"))).await;
                         continue;
                     }
                 };

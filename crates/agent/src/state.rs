@@ -1,7 +1,7 @@
 //! Small runtime state kept next to the config (not user settings):
 //! monitors of known clients and the last server we joined.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use glidedesk_proto::{DeviceId, MonitorInfo};
@@ -16,6 +16,8 @@ const MAX_BYTES: u64 = 1024 * 1024;
 pub struct State {
     pub known_monitors: HashMap<DeviceId, Vec<MonitorInfo>>,
     pub last_server: Option<DeviceId>,
+    /// Clients the user forgot on this server (they rejoin only on request).
+    pub forgotten: HashSet<DeviceId>,
     /// App version that last ran; a change means "just upgraded".
     pub last_version: Option<String>,
 }

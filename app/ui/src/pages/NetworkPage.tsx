@@ -6,7 +6,8 @@ import { Badge, Button, Callout, NumberInput, Page, Row, Section, Switch, TextIn
 
 type Update = (m: (c: Config) => void, now?: boolean) => void;
 const KIND = { ethernet: "Ethernet", wifi: "Wi-Fi", vpn: "VPN", loopback: "Loopback", virtual: "Virtual", other: "Other" } as const;
-const CIDR = /^(\d{1,3}(\.\d{1,3}){3}|[0-9a-f:]+)(\/\d{1,3})?$/i;
+// IPv4 only: an address or a range like 192.168.1.0/24.
+const CIDR = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}(\/([12]?\d|3[0-2]))?$/;
 
 function ListEditor({ label, values, onChange }: { label: string; values: string[]; onChange: (v: string[]) => void }) {
   const [text, setText] = useState(values.join("\n"));
@@ -14,7 +15,7 @@ function ListEditor({ label, values, onChange }: { label: string; values: string
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
   const bad = lines.filter((l) => !CIDR.test(l));
   return (
-    <div className="w-72">
+    <div className="w-full max-w-72">
       <textarea
         aria-label={label}
         className={`h-20 w-full rounded-lg border bg-panel px-2 py-1 font-mono text-[12.5px] ${bad.length ? "border-bad" : "border-line"}`}
@@ -84,34 +85,39 @@ export function NetworkPage({ status, config, update }: { status: AgentStatus; c
   const [ifaces, setIfaces] = useState<NetInterface[]>([]);
   const [error, setError] = useState<string | null>(null);
   const net = config.server.network;
-  const refresh = () => api.interfaces().then(setIfaces, (e) => setError(errorText(e)));
+  // Sorted by name: the OS lists interfaces in no fixed order.
+  const refresh = () => api.interfaces().then((l) => setIfaces([...l].sort((a, b) => a.friendly_name.localeCompare(b.friendly_name))), (e) => setError(errorText(e)));
   useEffect(() => {
     void refresh();
   }, []);
   const isClient = status.role === "client";
 
   if (isClient) {
+    const chosen = ifaces.find((i) => i.name === config.client.interface);
+    const chosenOff = config.client.interface !== "" && ifaces.length > 0 && (!chosen || !chosen.up);
     return (
-      <Page title="Network" subtitle="How this computer reaches the server.">
-        <Section title="IP version">
-          <Row label="Use IPv6" hint="Off: connect over IPv4 only (an IPv6 server address typed by hand still works).">
-            <Switch label="Use IPv6" checked={config.client.ipv6} onChange={(v) => update((c) => void (c.client.ipv6 = v), true)} />
-          </Row>
-        </Section>
-        <Section title="Interface" description="Leave on Any unless the server must be reached through one specific network.">
+      <Page title="Network" subtitle="How this computer reaches the server. Glidedesk uses IPv4 only." actions={<Button onClick={() => void refresh()}>Refresh</Button>}>
+        {error && <Callout tone="bad">{error}</Callout>}
+        {chosenOff && (
+          <Callout tone="warn">
+            {chosen ? `${chosen.friendly_name} is off` : `${config.client.interface} is not connected`} — Glidedesk uses any other network until it is back.
+          </Callout>
+        )}
+        <Section title="Interface" description="Leave on Any unless the server must be reached through one specific network. If that network is off, any other one is used.">
           <Row label="Use interface">
             <select
               aria-label="Interface"
-              className="rounded-lg border border-line bg-panel px-2 py-1"
+              className="w-full max-w-72 rounded-lg border border-line bg-panel px-2 py-1"
               value={config.client.interface}
               onChange={(e) => update((c) => void (c.client.interface = e.target.value), true)}
             >
               <option value="">Any</option>
+              {config.client.interface !== "" && !chosen && <option value={config.client.interface}>{config.client.interface} (not connected)</option>}
               {ifaces
                 .filter((i) => i.kind !== "loopback")
                 .map((i) => (
                   <option key={i.name} value={i.name}>
-                    {i.friendly_name} ({i.addrs.map((a) => a.ip).join(", ")})
+                    {i.friendly_name} ({i.addrs.map((a) => a.ip).join(", ")}){i.up ? "" : " — off"}
                   </option>
                 ))}
             </select>
@@ -122,9 +128,15 @@ export function NetworkPage({ status, config, update }: { status: AgentStatus; c
   }
 
   const toggle = (list: string[], v: string, on: boolean) => (on ? [...new Set([...list, v])] : list.filter((x) => x !== v));
+  const netNotes = (status.server?.warnings ?? []).filter((w) => w.startsWith("Network: ")).map((w) => w.slice("Network: ".length));
   return (
-    <Page title="Network" subtitle="Where this server listens for its computers." actions={<Button onClick={() => void refresh()}>Refresh</Button>}>
+    <Page title="Network" subtitle="Where this server listens for its computers. Glidedesk uses IPv4 only." actions={<Button onClick={() => void refresh()}>Refresh</Button>}>
       {error && <Callout tone="bad">{error}</Callout>}
+      {netNotes.map((n) => (
+        <Callout key={n} tone="warn">
+          {n}
+        </Callout>
+      ))}
       <Section title="Listen on">
         {(
           [
@@ -157,7 +169,7 @@ export function NetworkPage({ status, config, update }: { status: AgentStatus; c
                     />
                   )}
                   {i.friendly_name} <Badge tone="muted">{KIND[i.kind]}</Badge>
-                  {!i.up && <Badge tone="warn">down</Badge>}
+                  {!i.up && <Badge tone="warn">off — skipped until it is back</Badge>}
                 </label>
                 <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 pl-6 text-muted">
                   {i.addrs.map((a) =>
@@ -181,12 +193,13 @@ export function NetworkPage({ status, config, update }: { status: AgentStatus; c
             ))}
         </Section>
       )}
-      <Section title="Status">
+      <Section title="Status" description="Checked every few seconds: a network that goes off is skipped, and used again when it is back.">
         {(status.server?.bind ?? []).map((b) => (
           <Row key={b.addr} label={<span className="font-mono">{b.addr}</span>}>
             {b.error ? <Badge tone="bad">{b.error}</Badge> : <Badge tone="ok">listening</Badge>}
           </Row>
         ))}
+        {status.server && status.server.bind.length === 0 && <Row label="Not listening yet" hint="None of the chosen networks is connected." />}
         {!status.server && <Row label="Not listening" hint="Sharing is stopped or this computer is not the server." />}
       </Section>
       <Section title="Port & discovery">
@@ -195,9 +208,6 @@ export function NetworkPage({ status, config, update }: { status: AgentStatus; c
         </Row>
         <Row label="Announce on the network" hint="Lets clients find this server automatically (mDNS), only on the interfaces above.">
           <Switch label="Discovery" checked={net.discovery} onChange={(v) => update((c) => void (c.server.network.discovery = v), true)} />
-        </Row>
-        <Row label="Use IPv6" hint="Off: listen and announce on IPv4 only.">
-          <Switch label="Use IPv6" checked={net.ipv6} onChange={(v) => update((c) => void (c.server.network.ipv6 = v), true)} />
         </Row>
       </Section>
       <PasswordSection enabled={net.password != null} />

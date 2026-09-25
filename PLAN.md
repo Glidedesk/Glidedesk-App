@@ -918,3 +918,25 @@ found in the code, and the fix.
 | 18 | B3 name resolution, B4 password (PAKE) |
 | 19 | B9/B10 files on paste (offer protocol; Windows virtual files; macOS/Linux paste hold) |
 | 20 | Reviews (Rust, security, React, silent failures), tests, release build, GitHub CI green, docs, Graphify |
+
+## 15. Version 4 plan (2026-09-25) — field bugs round 2
+
+| # | Report | Cause found | Fix |
+|---|---|---|---|
+| C1 | Forget, Block, "Go there", Disconnect, Wake do nothing | The IPC envelope's `id` (request number) collided with the request's own `id` (computer): the agent could not parse those requests and answered under number 0, so the button waited forever | Envelope key is now `seq`; unparsable requests are answered under their `seq`; round-trip test for every request that names a computer |
+| C2 | A forgotten computer comes straight back | It reconnects a second later and was auto-added again | Forgotten ids are kept (agent state); such a client is refused with `Forgotten` until its user presses Reconnect (`Features::REJOIN`) |
+| C3 | Settings of an offline computer / after Block "don't stick" | Block/Forget changed settings behind the window, whose older copy undid them on its next save | The agent tells windows to reload after Block/Forget; offline edits are saved and applied on connect (tested) |
+| C4 | Old files "copy by themselves", no details | A client holding an unpasted offer downloaded the files when the cursor left, to pass them on; a Linux server fetched offers at once | Offers are never fetched without a paste or "Get them now"; files already on the clipboard when Glidedesk started, or copied over an hour ago, are not offered; an **activity log** (window) and transfer details say what moved, where and why |
+| C5 | IPv6 must be off completely | — | IPv4 only: no IPv6 listing, binding, mDNS, DNS results or typed addresses; schema v4 drops the IPv6 switches |
+| C6 | One chosen network off → should warn but keep working | Chosen interfaces were resolved once at start | The server re-checks every 3 s, drops/adds per-address sockets without touching other connections, and warns per network; it starts even when every chosen network is off. A client whose chosen interface is off uses any other and says so |
+| C7 | Client with several monitors | Linux injector cached the desktop size at start; speed used one scale for all screens | Desktop re-read every 2 s; per-monitor speed factor (Windows per-monitor scaling) |
+| C8 | Mouse/scroll speed should come from the server | Scrolling followed each computer's own direction | Protocol 3: wheel input travels in the server's direction; `ClientSettings` carries the effective speed/scroll/keys and the client window shows them ("Set by the server: 1.5×") |
+| C9 | (found in the lab) Linux server: nothing moves after crossing | A core pointer grab stops XInput raw events for the grabbing client | XI2 grab with raw event masks |
+| C10 | UI on phones/tablets | Fixed 228 px sidebar, rows that don't wrap | Responsive shell (top bar + drawer below 768 px), wrapping rows/inputs, stacked layout editor |
+
+Security note: Forget and Block act on the device id a client declares, so they tidy up the list
+but don't stop a modified client; the server **password** (§14.1) is what keeps others out.
+
+Testing: `docker/lab` runs a real server and two Linux clients (one with two screens) on virtual X
+displays and dummy networks, with the settings UI in a browser through a dev-only agent bridge
+(`make lab`). See docs/TESTING.md.

@@ -75,6 +75,35 @@ pub struct TransferView {
     pub total: u64,
     pub state: TransferState,
     pub error: Option<String>,
+    /// Why it runs and where the files go ("you pasted · into …").
+    pub detail: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ActivityTone {
+    Info,
+    Ok,
+    Bad,
+}
+
+/// One line of the clipboard & files log: what moved (or didn't), where, why.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActivityView {
+    /// Unix seconds.
+    pub at: u64,
+    pub text: String,
+    pub tone: ActivityTone,
+}
+
+/// The pointer and keyboard settings the server applies to this client.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AppliedView {
+    pub mouse_speed: f32,
+    pub scroll_speed: f32,
+    pub scroll_invert: bool,
+    /// `auto`, `none` or `swap-ctrl-meta`.
+    pub key_remap: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -92,6 +121,8 @@ pub struct ServerView {
     pub transfers: Vec<TransferView>,
     /// Files another computer offered, waiting for a paste here (§14.2).
     pub offer: Option<String>,
+    /// Recent clipboard & file events, newest first.
+    pub activity: Vec<ActivityView>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,6 +155,10 @@ pub struct ClientSideView {
     pub transfers: Vec<TransferView>,
     /// Files the server offered, waiting for a paste here (§14.2).
     pub offer: Option<String>,
+    /// Recent clipboard & file events, newest first.
+    pub activity: Vec<ActivityView>,
+    /// What the server applies here (`None` until connected).
+    pub applied: Option<AppliedView>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

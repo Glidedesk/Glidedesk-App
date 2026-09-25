@@ -10,15 +10,19 @@
 //!
 //! Files never move by themselves: the receiver's paste shortcut is held,
 //! the set is fetched into staging, put on the clipboard, and the paste is
-//! replayed so the file manager copies it.
+//! replayed so the file manager copies it. Files that were already on the
+//! clipboard when Glidedesk started, or were copied over an hour ago, are not
+//! offered at all. Every step is written to a short activity log (shown in
+//! the window) so it is always clear what moved, where to and why.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use glidedesk_clipboard::{ClipData, Clipboard};
+use glidedesk_ipc::views::{ActivityTone, ActivityView};
 use glidedesk_proto::{ClipFormat, ClipHeader, DeviceId, FileOffer, FileSetId, MAX_CLIPBOARD_BYTES, stream_kind};
 use glidedesk_transfer::{Manifest, Staging, build_manifest, receive_set, send_set};
 use tokio::sync::watch;
@@ -56,6 +60,19 @@ pub enum Received {
 /// How many recent offers we keep ready to be fetched.
 const MAX_OFFERS: usize = 8;
 const OFFER_TTL: Duration = Duration::from_secs(3600);
+/// Files copied longer ago than this are not offered (they are old news).
+const MAX_FILE_AGE: Duration = Duration::from_secs(3600);
+/// Lines kept in the activity log.
+const MAX_ACTIVITY: usize = 40;
+
+/// When the local clipboard last changed, as far as we have seen.
+#[derive(Clone, Copy, Debug)]
+struct Seen {
+    seq: u64,
+    since: std::time::Instant,
+    /// It was already there when Glidedesk started (age unknown).
+    before_start: bool,
+}
 
 /// Files we offered: who may fetch them, and what exactly.
 struct Offered {
@@ -91,6 +108,8 @@ pub struct Sync {
     pending: Mutex<Option<Pending>>,
     /// `true` while an offer waits here (the capture holds the paste shortcut).
     hold: watch::Sender<bool>,
+    seen: Mutex<Option<Seen>>,
+    activity: Mutex<VecDeque<ActivityView>>,
 }
 
 impl std::fmt::Debug for Sync {
@@ -121,6 +140,8 @@ impl Sync {
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(1, |d| u64::try_from(d.as_nanos() & u128::from(u64::MAX)).unwrap_or(1));
+        let seen =
+            clip.as_ref().map(|c| Seen { seq: c.sequence(), since: std::time::Instant::now(), before_start: true });
         Arc::new(Self {
             clip: clip.map(|c| Arc::new(Mutex::new(c))),
             written: Mutex::new(None),
@@ -131,7 +152,51 @@ impl Sync {
             offers: Mutex::new(Vec::new()),
             pending: Mutex::new(None),
             hold: watch::channel(false).0,
+            seen: Mutex::new(seen),
+            activity: Mutex::new(VecDeque::new()),
         })
+    }
+
+    /// Adds a line to the activity log (and the agent log).
+    pub fn note(&self, tone: ActivityTone, text: impl Into<String>) {
+        let text = text.into();
+        info!(target: "glidedesk_core::clipboard", "{text}");
+        let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let mut log = lock(&self.activity);
+        log.push_front(ActivityView { at, text, tone });
+        log.truncate(MAX_ACTIVITY);
+    }
+
+    /// Recent clipboard & file events, newest first.
+    #[must_use]
+    pub fn activity(&self) -> Vec<ActivityView> {
+        lock(&self.activity).iter().cloned().collect()
+    }
+
+    /// Samples the clipboard's change counter (call every few seconds, off the
+    /// async threads), so we know how old copied files are.
+    pub fn observe(&self) {
+        let Some(clip) = &self.clip else { return };
+        let seq = lock(clip).sequence();
+        let mut seen = lock(&self.seen);
+        if seen.is_none_or(|s| s.seq != seq) {
+            *seen = Some(Seen { seq, since: std::time::Instant::now(), before_start: false });
+        }
+    }
+
+    /// Why files with clipboard sequence `seq` should not be offered, if so.
+    fn stale(&self, seq: u64) -> Option<&'static str> {
+        let seen = (*lock(&self.seen))?;
+        if seen.seq != seq {
+            return None; // changed since the last sample: just copied
+        }
+        if seen.before_start {
+            Some("it was already on the clipboard when Glidedesk started")
+        } else if seen.since.elapsed() > MAX_FILE_AGE {
+            Some("it was copied over an hour ago")
+        } else {
+            None
+        }
     }
 
     /// Follows "an offer waits for a paste here".
@@ -191,25 +256,38 @@ impl Sync {
         limit: u64,
     ) -> Result<(), String> {
         let Some(clip) = self.clip.clone() else { return Ok(()) };
-        if self.offer_pending() {
-            // Our clipboard only shows files offered by another computer and
-            // the cursor moves on to a third one: fetch them here first, so
-            // they can be offered onwards.
+        if let Some(what) = self.offer_description() {
+            // Our clipboard only shows files another computer offered. They are
+            // never downloaded just to pass them on: paste them here first.
+            self.note(
+                ActivityTone::Info,
+                format!("{what} was not passed on to {peer}: it is only offered here — paste it here first"),
+            );
+            return Ok(());
+        }
+        let cap = if limit == 0 { MAX_CLIPBOARD_BYTES } else { limit.min(MAX_CLIPBOARD_BYTES) };
+        let reader = clip.clone();
+        let (data, seq) = tokio::task::spawn_blocking(move || {
+            let mut c = lock(&reader);
+            let seq = c.sequence();
+            c.read(cap).map(|d| (d, seq))
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+        if !data.files.is_empty() {
             if !allow_files {
                 return Ok(());
             }
-            self.clone().fetch_offer().await?;
-        }
-        let cap = if limit == 0 { MAX_CLIPBOARD_BYTES } else { limit.min(MAX_CLIPBOARD_BYTES) };
-        let data = tokio::task::spawn_blocking(move || lock(&clip).read(cap))
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
-        if !data.files.is_empty() {
-            if allow_files {
-                return self.offer(conn, target, data.files, data.cut).await;
+            if let Some(why) = self.stale(seq) {
+                let what = describe_paths(&data.files);
+                self.note(
+                    ActivityTone::Info,
+                    format!("{what} not offered to {peer}: {why}. Copy it again to share it"),
+                );
+                return Ok(());
             }
-            return Ok(());
+            return self.offer(conn, target, peer, data.files, data.cut).await;
         }
         if !allow_clip || data.is_empty() {
             return Ok(());
@@ -229,7 +307,7 @@ impl Sync {
         }
         let header = ClipHeader { parts: parts.iter().map(|(f, b)| (*f, b.len() as u64)).collect(), files: None };
         let total: u64 = header.parts.iter().map(|(_, n)| n).sum();
-        let tracked = (total >= LIST_THRESHOLD).then(|| self.transfers.start(&peer, true, "Clipboard".into()));
+        let tracked = (total >= LIST_THRESHOLD).then(|| self.transfers.start(&peer, true, "Clipboard".into(), None));
         let res = async {
             let body = postcard::to_stdvec(&header).map_err(|e| e.to_string())?;
             let mut s = conn.open_uni().await.map_err(|e| e.to_string())?;
@@ -251,6 +329,10 @@ impl Sync {
             self.transfers.finish(id, res.clone());
         }
         debug!(bytes = total, "clipboard sent");
+        if res.is_ok() {
+            let kinds = clip_kinds(&header);
+            self.note(ActivityTone::Info, format!("Clipboard ({kinds}, {}) sent to {peer}", human(total)));
+        }
         res
     }
 
@@ -259,6 +341,7 @@ impl Sync {
         self: Arc<Self>,
         conn: quinn::Connection,
         target: Option<DeviceId>,
+        peer: String,
         files: Vec<PathBuf>,
         cut: bool,
     ) -> Result<(), String> {
@@ -294,6 +377,14 @@ impl Sync {
         s.write_all(&body).await.map_err(|e| e.to_string())?;
         s.finish().map_err(|e| e.to_string())?;
         info!(items = offer.items, bytes = offer.total_bytes, "files offered");
+        self.note(
+            ActivityTone::Info,
+            format!(
+                "Offered {} ({}) to {peer} — nothing is copied until you paste there",
+                describe_names(&offer.names, offer.items),
+                human(offer.total_bytes)
+            ),
+        );
         Ok(())
     }
 
@@ -322,7 +413,10 @@ impl Sync {
             let _ = send.reset(0u32.into());
             return;
         };
-        let (tid, progress) = self.transfers.start(&peer, true, describe(&manifest));
+        let what = describe(&manifest);
+        let detail = format!("{peer} pasted them");
+        let (tid, progress) = self.transfers.start(&peer, true, what.clone(), Some(detail));
+        self.note(ActivityTone::Info, format!("{peer} pasted {what}: sending {}", human(manifest.total_bytes)));
         let res = async {
             send_set(&mut send, &files, &manifest, &progress).await.map_err(|e| e.to_string())?;
             send.finish().map_err(|e| e.to_string())?;
@@ -330,12 +424,17 @@ impl Sync {
         }
         .await;
         info!(bytes = manifest.total_bytes, ok = res.is_ok(), "offered files sent");
+        match &res {
+            Ok(()) => self.note(ActivityTone::Ok, format!("Sent {what} to {peer}")),
+            Err(e) => self.note(ActivityTone::Bad, format!("Sending {what} to {peer} failed: {e}")),
+        }
         self.transfers.finish(tid, res);
     }
 
     /// Fetches the offered files into staging and puts them on the clipboard.
+    /// `why` says who asked ("you pasted", "you chose Get them now").
     /// `Ok(None)`: nothing (or nothing current) was offered.
-    pub async fn fetch_offer(self: Arc<Self>) -> Result<Option<ReceivedFiles>, String> {
+    pub async fn fetch_offer(self: Arc<Self>, why: &str) -> Result<Option<ReceivedFiles>, String> {
         let Some(clip) = self.clip.clone() else { return Ok(None) };
         let pending = lock(&self.pending).take();
         self.hold.send_replace(false);
@@ -354,9 +453,14 @@ impl Sync {
             ));
         }
         let name = describe_names(&p.offer.names, p.offer.items);
-        let (tid, progress) = self.transfers.start(&p.peer, false, name.clone());
-        progress.total.store(p.offer.total_bytes, Ordering::Relaxed);
         let dir = staging.new_set(self.next_set.fetch_add(1, Ordering::Relaxed)).map_err(|e| e.to_string())?;
+        let detail = format!("{why} · downloading to {}", dir.display());
+        let (tid, progress) = self.transfers.start(&p.peer, false, name.clone(), Some(detail));
+        progress.total.store(p.offer.total_bytes, Ordering::Relaxed);
+        self.note(
+            ActivityTone::Info,
+            format!("Copying {name} ({}) from {} — {why}", human(p.offer.total_bytes), p.peer),
+        );
         let res = async {
             let (mut send, mut recv) = p.conn.open_bi().await.map_err(|e| e.to_string())?;
             send.write_all(&[stream_kind::FETCH]).await.map_err(|e| e.to_string())?;
@@ -380,12 +484,14 @@ impl Sync {
             Err(e) => {
                 staging.discard(&dir);
                 self.transfers.finish(tid, Err(e.clone()));
+                self.note(ActivityTone::Bad, format!("Copying {name} from {} failed: {e}", p.peer));
                 return Err(e);
             }
         };
         if lock(&clip).sequence() != p.placeholder {
             staging.discard(&dir);
             self.transfers.finish(tid, Err("cancelled: something else was copied".into()));
+            self.note(ActivityTone::Info, format!("{name}: cancelled — something else was copied meanwhile"));
             return Ok(None);
         }
         let roots = glidedesk_transfer::staging::roots_in(&dir, &manifest.roots());
@@ -394,6 +500,10 @@ impl Sync {
         self.write_local(&clip, data, p.origin).await?;
         self.transfers.finish(tid, Ok(()));
         info!(bytes = manifest.total_bytes, "offered files received");
+        self.note(
+            ActivityTone::Ok,
+            format!("{name} arrived from {} and is on the clipboard — the paste puts it where you pasted", p.peer),
+        );
         Ok(Some(ReceivedFiles { set: p.offer.set, cut, roots, origin: p.origin }))
     }
 
@@ -418,8 +528,13 @@ impl Sync {
         match kind {
             stream_kind::CLIPBOARD if allow_clip => {
                 let data = read_clip(&mut stream, limit).await?;
+                let kinds = data_kinds(&data);
                 self.write_local(&clip, data, origin).await?;
+                if let Some(old) = self.offer_description() {
+                    self.note(ActivityTone::Info, format!("{old}: no longer offered — {peer} copied something newer"));
+                }
                 self.drop_pending();
+                self.note(ActivityTone::Info, format!("Clipboard ({kinds}) received from {peer}"));
                 Ok(Received::Nothing)
             }
             stream_kind::OFFER if allow_files => {
@@ -432,6 +547,14 @@ impl Sync {
                 // Replace the old clipboard at once, so a paste never brings back stale files.
                 let placeholder =
                     self.write_local(&clip, ClipData { text: Some(text), ..ClipData::default() }, origin).await?;
+                self.note(
+                    ActivityTone::Info,
+                    format!(
+                        "{} ({}) offered by {peer} — paste in a folder here to copy it; nothing is copied before",
+                        describe_names(&offer.names, offer.items),
+                        human(offer.total_bytes)
+                    ),
+                );
                 *lock(&self.pending) = Some(Pending { offer, conn, origin, peer, placeholder });
                 self.hold.send_replace(true);
                 Ok(Received::Offer)
@@ -498,6 +621,42 @@ impl Sync {
             Err(e) => warn!(error = %e, "cut task failed"),
         }
     }
+}
+
+/// "text", "text, image" — what a clipboard carries.
+fn clip_kinds(h: &ClipHeader) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for (f, _) in &h.parts {
+        let k = match f {
+            ClipFormat::Text | ClipFormat::Html | ClipFormat::Rtf => "text",
+            ClipFormat::Png => "image",
+        };
+        if !out.contains(&k) {
+            out.push(k);
+        }
+    }
+    if out.is_empty() { "empty".into() } else { out.join(", ") }
+}
+
+fn data_kinds(d: &ClipData) -> String {
+    let mut out = Vec::new();
+    if d.text.is_some() || d.html.is_some() || d.rtf.is_some() {
+        out.push("text");
+    }
+    if d.png.is_some() {
+        out.push("image");
+    }
+    if out.is_empty() { "empty".into() } else { out.join(", ") }
+}
+
+/// "report.pdf" or "report.pdf and 2 more" from local paths.
+fn describe_paths(files: &[PathBuf]) -> String {
+    let names: Vec<String> = files
+        .iter()
+        .take(1)
+        .map(|p| p.file_name().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into_owned()))
+        .collect();
+    describe_names(&names, u32::try_from(files.len()).unwrap_or(u32::MAX))
 }
 
 /// "report.pdf", "report.pdf and 2 more".
@@ -610,6 +769,32 @@ mod tests {
         assert!(f.exists());
         sync.clone().files_taken(FileSetId(42), Some(a)).await;
         assert!(!lock(&sync.cuts).contains_key(&42), "the recipient releases it");
+    }
+
+    #[test]
+    fn files_already_copied_at_start_are_stale_until_the_clipboard_changes() {
+        let mut clip = glidedesk_clipboard::mock::MockClipboard::default();
+        clip.write(&ClipData { text: Some("old".into()), ..ClipData::default() }).unwrap();
+        let shared = clip.clone();
+        let sync = Sync::new(Some(Box::new(clip)));
+        let seq = shared.sequence();
+        assert!(sync.stale(seq).is_some(), "on the clipboard before Glidedesk started");
+        let mut c = shared.clone();
+        c.write(&ClipData { text: Some("new".into()), ..ClipData::default() }).unwrap();
+        assert!(sync.stale(shared.sequence()).is_none(), "changed since: just copied");
+        sync.observe();
+        assert!(sync.stale(shared.sequence()).is_none(), "seen fresh");
+    }
+
+    #[test]
+    fn the_activity_log_is_bounded_and_newest_first() {
+        let sync = Sync::new(None);
+        for i in 0..(MAX_ACTIVITY + 5) {
+            sync.note(ActivityTone::Info, format!("line {i}"));
+        }
+        let log = sync.activity();
+        assert_eq!(log.len(), MAX_ACTIVITY);
+        assert_eq!(log[0].text, format!("line {}", MAX_ACTIVITY + 4));
     }
 
     #[test]

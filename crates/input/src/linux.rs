@@ -29,7 +29,7 @@ use x11rb::protocol::randr::ConnectionExt as _;
 use x11rb::protocol::xfixes::ConnectionExt as _;
 use x11rb::protocol::xinput::{self, ConnectionExt as _};
 use x11rb::protocol::xproto::{
-    AtomEnum, ClientMessageEvent, ConnectionExt as _, CreateWindowAux, EventMask, GrabMode, WindowClass,
+    AtomEnum, ClientMessageEvent, ConnectionExt as _, CreateWindowAux, EventMask, GrabMode, GrabStatus, WindowClass,
 };
 use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
@@ -119,6 +119,8 @@ struct Shared {
     grabbed: AtomicBool,
     stopped: AtomicBool,
     pin: Mutex<Point>,
+    /// Master pointer and keyboard (XI2 device ids) grabbed while a client has control.
+    masters: (u16, u16),
     tx: mpsc::Sender<CaptureEvent>,
 }
 
@@ -162,21 +164,40 @@ impl CaptureControl for Control {
             let centre = Point::new(d.x + d.w / 2, d.y + d.h / 2);
             *lock(&s.pin) = centre;
             s.warp(centre);
-            let _ = s.conn.grab_pointer(
-                false,
-                s.root,
-                EventMask::POINTER_MOTION | EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE,
-                GrabMode::ASYNC,
-                GrabMode::ASYNC,
-                NONE,
-                NONE,
-                CURRENT_TIME,
-            );
-            let _ = s.conn.grab_keyboard(false, s.root, CURRENT_TIME, GrabMode::ASYNC, GrabMode::ASYNC);
+            // An XI2 grab that asks for the raw events: with a core grab the X
+            // server stops sending raw events to the grabbing client (XI ≥ 2.1
+            // "already delivered to the grab"), and motion, keys and buttons
+            // would stop reaching us the moment the cursor left this screen.
+            let (pointer, keyboard) = s.masters;
+            let pointer_mask = xinput::XIEventMask::RAW_MOTION
+                | xinput::XIEventMask::RAW_BUTTON_PRESS
+                | xinput::XIEventMask::RAW_BUTTON_RELEASE;
+            let key_mask = xinput::XIEventMask::RAW_KEY_PRESS | xinput::XIEventMask::RAW_KEY_RELEASE;
+            for (dev, mask) in [(pointer, pointer_mask), (keyboard, key_mask)] {
+                let status = s
+                    .conn
+                    .xinput_xi_grab_device(
+                        s.root,
+                        CURRENT_TIME,
+                        NONE,
+                        dev,
+                        GrabMode::ASYNC,
+                        GrabMode::ASYNC,
+                        xinput::GrabOwner::NO_OWNER,
+                        &[u32::from(mask)],
+                    )
+                    .ok()
+                    .and_then(|c| c.reply().ok())
+                    .map(|r| r.status);
+                if status != Some(GrabStatus::SUCCESS) {
+                    warn!(device = dev, ?status, "could not grab the input device");
+                }
+            }
             let _ = s.conn.xfixes_hide_cursor(s.root);
         } else {
-            let _ = s.conn.ungrab_pointer(CURRENT_TIME);
-            let _ = s.conn.ungrab_keyboard(CURRENT_TIME);
+            let (pointer, keyboard) = s.masters;
+            let _ = s.conn.xinput_xi_ungrab_device(CURRENT_TIME, pointer);
+            let _ = s.conn.xinput_xi_ungrab_device(CURRENT_TIME, keyboard);
             let _ = s.conn.xfixes_show_cursor(s.root);
         }
         let _ = s.conn.flush();
@@ -274,6 +295,7 @@ pub fn start_capture() -> Result<Capture, InputError> {
     .map_err(os)?
     .check()
     .map_err(os)?;
+    let masters = master_devices(&conn);
     let wake = conn.generate_id().map_err(os)?;
     conn.create_window(0, wake, root, 0, 0, 1, 1, 0, WindowClass::INPUT_ONLY, 0, &CreateWindowAux::new())
         .map_err(os)?;
@@ -287,6 +309,7 @@ pub fn start_capture() -> Result<Capture, InputError> {
         grabbed: AtomicBool::new(false),
         stopped: AtomicBool::new(false),
         pin: Mutex::new(Point::default()),
+        masters,
         tx,
     });
     let s = shared.clone();
@@ -295,6 +318,15 @@ pub fn start_capture() -> Result<Capture, InputError> {
         .spawn(move || capture_loop(&s))
         .map_err(|e| InputError::Os(e.to_string()))?;
     Ok(Capture { control: Arc::new(Control(shared)), events: rx })
+}
+
+/// XI2 ids of the master pointer and keyboard (2 and 3 on a normal X server).
+fn master_devices(conn: &RustConnection) -> (u16, u16) {
+    let info = conn.xinput_xi_query_device(xinput::Device::ALL_MASTER).ok().and_then(|c| c.reply().ok());
+    let find = |kind: xinput::DeviceType, fallback: u16| {
+        info.as_ref().and_then(|r| r.infos.iter().find(|d| d.type_ == kind).map(|d| d.deviceid)).unwrap_or(fallback)
+    };
+    (find(xinput::DeviceType::MASTER_POINTER, 2), find(xinput::DeviceType::MASTER_KEYBOARD, 3))
 }
 
 fn capture_loop(s: &Shared) {
@@ -371,11 +403,16 @@ enum Backend {
     Xtest { conn: Box<RustConnection>, root: u32 },
 }
 
+const DESKTOP_REFRESH: Duration = Duration::from_secs(2);
+
 struct LinuxInjector {
     backend: Backend,
     pressed: Pressed,
     pos: Point,
+    /// All monitors; re-read every few seconds so a screen plugged in (or a
+    /// remote-desktop window resized) is reachable without a restart.
     desktop: Rect,
+    desktop_at: std::time::Instant,
     wheel_rem: (i32, i32),
 }
 
@@ -459,6 +496,7 @@ pub fn injector() -> Result<Box<dyn Injector>, InputError> {
         pressed: Pressed::default(),
         pos: Point::default(),
         desktop: desktop(),
+        desktop_at: std::time::Instant::now(),
         wheel_rem: (0, 0),
     }))
 }
@@ -474,6 +512,10 @@ impl LinuxInjector {
 
     #[allow(clippy::cast_possible_truncation)]
     fn move_abs(&mut self, p: Point) -> Result<(), InputError> {
+        if self.desktop_at.elapsed() > DESKTOP_REFRESH {
+            self.desktop = desktop();
+            self.desktop_at = std::time::Instant::now();
+        }
         let d = self.desktop;
         let p = d.clamp(p);
         self.pos = p;

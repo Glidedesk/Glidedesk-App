@@ -11,7 +11,7 @@ use glidedesk_proto::{DEFAULT_PORT, DeviceId};
 use serde::{Deserialize, Serialize};
 
 /// Current schema version written by this build.
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -138,13 +138,11 @@ pub struct Network {
     pub port: u16,
     /// Only accept clients from a subnet of one of our bound interfaces.
     pub same_subnet_only: bool,
-    /// CIDR filters (`192.168.1.0/24`, `fd00::/8`, single IPs). Empty = everyone.
+    /// CIDR filters (`192.168.1.0/24`, single IPs). Empty = everyone.
     pub allow_list: Vec<String>,
     pub block_list: Vec<String>,
     /// Announce with mDNS on the bound interfaces.
     pub discovery: bool,
-    /// Also listen and announce on IPv6 (off: IPv4 only).
-    pub ipv6: bool,
     /// Clients must know this password (PLAN §14.1). Only a salted Argon2id key
     /// is stored, never the password. `None` = open.
     pub password: Option<StoredPassword>,
@@ -174,7 +172,6 @@ impl Default for Network {
             allow_list: Vec::new(),
             block_list: Vec::new(),
             discovery: true,
-            ipv6: false,
             password: None,
         }
     }
@@ -346,8 +343,6 @@ pub struct Client {
     pub server_address: String,
     /// The server's password, if it has one (kept in this private settings file).
     pub password: String,
-    /// Also connect over IPv6 (off: IPv4 only, unless an IPv6 address is typed).
-    pub ipv6: bool,
     /// Interface used to reach the server; empty = any.
     pub interface: String,
     /// Where received files land; `None` = Downloads.
@@ -370,7 +365,6 @@ impl Default for Client {
         Self {
             server_address: String::new(),
             password: String::new(),
-            ipv6: false,
             interface: String::new(),
             receive_dir: None,
             accept_clipboard: true,

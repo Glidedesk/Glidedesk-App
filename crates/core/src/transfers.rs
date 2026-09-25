@@ -15,6 +15,7 @@ struct Item {
     peer: String,
     outgoing: bool,
     name: String,
+    detail: Option<String>,
     progress: Arc<Progress>,
     state: TransferState,
     error: Option<String>,
@@ -28,7 +29,7 @@ pub struct Transfers {
 }
 
 impl Transfers {
-    pub fn start(&self, peer: &str, outgoing: bool, name: String) -> (u64, Arc<Progress>) {
+    pub fn start(&self, peer: &str, outgoing: bool, name: String, detail: Option<String>) -> (u64, Arc<Progress>) {
         let id = self.next.fetch_add(1, Ordering::Relaxed) + 1;
         let progress = Arc::new(Progress::default());
         let mut items = self.items.lock().unwrap_or_else(PoisonError::into_inner);
@@ -38,6 +39,7 @@ impl Transfers {
             peer: peer.to_owned(),
             outgoing,
             name,
+            detail,
             progress: progress.clone(),
             state: TransferState::Active,
             error: None,
@@ -89,6 +91,7 @@ impl Transfers {
                 total: i.progress.total.load(Ordering::Relaxed),
                 state: i.state,
                 error: i.error.clone(),
+                detail: i.detail.clone(),
             })
             .collect()
     }

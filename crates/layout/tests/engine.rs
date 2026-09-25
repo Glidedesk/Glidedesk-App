@@ -178,6 +178,47 @@ fn speed_factor_accumulates_fractions() {
     assert_eq!(e.on_remote_move(1, 0, ctx()), Outcome::Move { pos: Point::new(1, 10) });
 }
 
+/// A client with two screens: a 1080p one and, on its right, a taller one
+/// at 150 % (Windows reports physical pixels).
+fn two_screen_client() -> Machine {
+    let mut big = mon("big", Rect::new(1920, -200, 2560, 1440));
+    big.scale = 1.5;
+    Machine { id: CLIENT, monitors: vec![mon("a", Rect::new(0, 0, 1920, 1080)), big] }
+}
+
+#[test]
+fn the_cursor_reaches_every_client_monitor_and_speed_follows_each_screen() {
+    let layout =
+        Layout::build([stacked_server(), two_screen_client()], &[LinkSpec::simple(SERVER, Side::Right, CLIENT)]);
+    let mut e = Engine::new(SERVER, layout, SwitchPolicy::default());
+    e.set_units(CLIENT, vec![1.0, 1.5]);
+    assert!(matches!(e.on_local_move(Point::new(999, 250), 5, 0, ctx()), Outcome::Enter { .. }));
+    // Walk right across the first screen onto the second.
+    let mut last = Point::default();
+    for _ in 0..30 {
+        if let Outcome::Move { pos } = e.on_remote_move(100, 0, ctx()) {
+            last = pos;
+        }
+    }
+    assert!(last.x >= 1920, "reached the second screen: {last:?}");
+    // On the 150 % screen 10 px of motion move 15 of its pixels.
+    let before = last;
+    let Outcome::Move { pos } = e.on_remote_move(-10, 0, ctx()) else { panic!("moved") };
+    assert_eq!(pos.x, before.x - 15);
+    // Up into the part of the tall screen that is above the first one.
+    let Outcome::Move { pos } = e.on_remote_move(0, -300, ctx()) else { panic!("moved") };
+    assert!(pos.y < 0, "the taller screen is reachable above the first: {pos:?}");
+    // Back left onto the first screen at a height both share.
+    e.on_remote_move(0, 600, ctx());
+    let mut back = Point::default();
+    for _ in 0..40 {
+        if let Outcome::Move { pos } = e.on_remote_move(-100, 0, ctx()) {
+            back = pos;
+        }
+    }
+    assert!(back.x < 1920, "back on the first screen: {back:?}");
+}
+
 fn arb_monitors() -> impl Strategy<Value = Vec<MonitorInfo>> {
     // Up to 3 monitors placed in a row with random sizes and vertical offsets.
     prop::collection::vec((200i32..3000, 200i32..2000, -500i32..500), 1..=3).prop_map(|specs| {

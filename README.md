@@ -42,12 +42,18 @@ General → Start at login.
   password; others can't connect and are never listed. The password never crosses the
   network (SPAKE2 bound to the encrypted connection) and only a salted hash is stored.
 - **Keyboard and mouse behave natively:** keys act as on a keyboard plugged into the computer
-  you're controlling, and scrolling follows each computer's own setting (e.g. natural
-  scrolling on a Mac). Swapping Cmd and Ctrl is an option per computer.
+  you're controlling. Pointer speed and scrolling follow the server by default (same feel and
+  scroll direction on every screen, including clients with several monitors at different
+  scaling); change them per computer in *Computers → Settings*. Swapping Cmd and Ctrl is an
+  option per computer.
 - **Files:** copy files, move to another computer and paste with the keyboard shortcut
   (⌘V / Ctrl+V). Nothing is copied before you paste; the paste waits while the files arrive,
   then your file manager pastes them. No size limit (free disk space is checked). To paste
-  with the mouse, first choose *Get … now* in the tray or window.
+  with the mouse, first choose *Get … now* in the tray or window. Files that were already
+  copied when Glidedesk started (or over an hour ago) are not offered; *Clipboard & Files →
+  Activity* lists everything that moved, where and why.
+- **Network:** IPv4 only. With *Network → Selected interfaces*, a network that goes off shows a
+  warning and sharing continues on the others; it is used again when it comes back.
 
 Uninstall: Windows → Settings → Apps (asks whether to keep settings) · macOS → "Uninstall
 Glidedesk" in the DMG or Advanced → Uninstall · Linux → your package manager (settings in

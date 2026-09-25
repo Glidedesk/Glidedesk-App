@@ -22,20 +22,29 @@ export interface ClientView {
 export interface TransferView {
   id: number; peer: string; outgoing: boolean; name: string; done: number; total: number;
   state: "active" | "done" | "failed"; error: string | null;
+  /** Why it runs and where the files go. */
+  detail: string | null;
 }
+
+/** One line of the clipboard & files log (newest first). */
+export interface ActivityView { at: number; text: string; tone: "info" | "ok" | "bad" }
+
+/** What the server applies to this client. */
+export interface AppliedView { mouse_speed: number; scroll_speed: number; scroll_invert: boolean; key_remap: RemapPreset }
 
 export interface MachineView { id: DeviceId | null; name: string; monitors: MonitorInfo[] }
 
 export interface ServerView {
   running: boolean; bind: { addr: string; error: string | null }[]; fingerprint: string; local: MachineView;
   clients: ClientView[]; focus: DeviceId | null; locked: boolean; warnings: string[]; transfers: TransferView[];
-  offer: string | null;
+  offer: string | null; activity: ActivityView[];
 }
 
 export interface ClientSideView {
   state: LinkState; server_id: DeviceId | null; server_name: string | null; server_address: string | null;
   server_version: string | null; latency_ms: number | null; active: boolean; clipboard: boolean; files: boolean;
   message: string | null; local: MachineView; transfers: TransferView[]; offer: string | null;
+  activity: ActivityView[]; applied: AppliedView | null;
 }
 
 export interface AgentStatus {
@@ -75,7 +84,7 @@ export interface Config {
   server: {
     network: {
       mode: "all" | "interfaces" | "addresses"; interfaces: string[]; addresses: string[]; port: number;
-      same_subnet_only: boolean; allow_list: string[]; block_list: string[]; discovery: boolean; ipv6: boolean;
+      same_subnet_only: boolean; allow_list: string[]; block_list: string[]; discovery: boolean;
       /** Salted Argon2id key of the server password (never the password itself). */
       password: { salt: string; key: string } | null;
     };
@@ -94,7 +103,7 @@ export interface Config {
     clients: ClientEntry[];
   };
   client: {
-    server_address: string; password: string; ipv6: boolean; interface: string; receive_dir: string | null; accept_clipboard: boolean; accept_files: boolean;
+    server_address: string; password: string; interface: string; receive_dir: string | null; accept_clipboard: boolean; accept_files: boolean;
     mouse_speed: number | null; scroll_speed: number | null; scroll_invert: boolean | null; key_remap: RemapPreset | null;
     draw_cursor: boolean; led_sync: boolean;
   };
@@ -103,7 +112,7 @@ export interface Config {
 
 export interface NetInterface {
   name: string; friendly_name: string; kind: "ethernet" | "wifi" | "vpn" | "loopback" | "virtual" | "other";
-  up: boolean; addrs: { ip: string; prefix: number; scope_id: number }[]; mac: string | null;
+  up: boolean; addrs: { ip: string; prefix: number }[]; mac: string | null;
 }
 
 export type NoticeView =
@@ -112,6 +121,7 @@ export type NoticeView =
   | { kind: "client-offline"; id: DeviceId; name: string }
   | { kind: "server-connected"; name: string }
   | { kind: "identify"; label: string }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string }
+  | { kind: "info"; message: string };
 
 export interface ImportPreview { config: Config; layout_only: boolean; issues: string[]; changed_sections: string[] }

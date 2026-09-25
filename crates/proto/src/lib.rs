@@ -21,7 +21,9 @@ use serde::{Deserialize, Serialize};
 pub use geom::{Point, Rect, Side};
 
 /// Wire protocol version. Bump on any incompatible change.
-pub const PROTOCOL_VERSION: u16 = 2;
+/// 3: `ClientSettings` carries the effective pointer settings; wheel input is
+/// in the server's scrolling direction; `Forgotten` / `REJOIN`.
+pub const PROTOCOL_VERSION: u16 = 3;
 /// QUIC/TLS ALPN. Kept at 1 across protocol versions so an older peer still
 /// connects far enough to be told "update Glidedesk" (`Hello.protocol` decides).
 pub const ALPN: &[u8] = b"glidedesk/1";
@@ -144,6 +146,8 @@ impl Features {
     pub const LED_SYNC: u32 = 1 << 2;
     pub const DRAW_CURSOR: u32 = 1 << 3;
     pub const LOCK_SYNC: u32 = 1 << 4;
+    /// The user asked this client to join again after the server forgot it.
+    pub const REJOIN: u32 = 1 << 5;
 
     #[must_use]
     pub const fn has(self, bit: u32) -> bool {
@@ -218,6 +222,13 @@ pub struct ClientSettings {
     pub clipboard_send: bool,
     /// Largest clipboard payload either side sends (bytes, 0 = no limit).
     pub clipboard_limit: u64,
+    /// What the server applies for this client (its own override included),
+    /// so the client can show it: pointer speed multiplier, scroll speed
+    /// multiplier, reversed scrolling, modifier mapping (0 auto, 1 native, 2 swap).
+    pub mouse_speed: f32,
+    pub scroll_speed: f32,
+    pub scroll_invert: bool,
+    pub key_remap: u8,
 }
 
 impl Default for ClientSettings {
@@ -230,6 +241,10 @@ impl Default for ClientSettings {
             clipboard_receive: true,
             clipboard_send: true,
             clipboard_limit: 0,
+            mouse_speed: 1.0,
+            scroll_speed: 1.0,
+            scroll_invert: false,
+            key_remap: 1,
         }
     }
 }
@@ -316,6 +331,9 @@ pub enum RejectReason {
     WrongPassword,
     PasswordRequired,
     TooManyAttempts,
+    /// Protocol 3: the user chose "Forget" on the server; the client joins
+    /// again only when its user asks (`Features::REJOIN`).
+    Forgotten,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -425,7 +443,9 @@ pub enum Input {
         button: MouseButton,
         down: bool,
     },
-    /// Scroll in 1/120-notch units (Windows `WHEEL_DELTA` convention), +y = up/away.
+    /// Scroll in 1/120-notch units (Windows `WHEEL_DELTA` convention), +y = up/away,
+    /// already in the direction the server's user scrolls (natural or not):
+    /// the client injects it as is.
     Wheel {
         dx: i32,
         dy: i32,
