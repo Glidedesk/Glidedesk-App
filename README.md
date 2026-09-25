@@ -80,16 +80,27 @@ make test           # lint + all tests + macOS/Windows cross-checks + UI tests
 make release        # macOS arm64 + Windows x64 + Linux (this machine's arch) → output-build/
 ```
 
-## GitHub Actions
+## Building and testing: local Docker only (no GitHub CI)
 
-- **Every push / pull request:** lint, tests, UI tests, Windows cross-check (`ci.yml`).
-- **Push to `main`:** macOS + Windows x64 + Linux x64/arm64 installers → **Nightly** pre-release.
-- **Tag `vX.Y.Z`:** the same → a normal release with every file, checksums and signature:
-  `git tag v0.2.0 && git push --tags`.
+GitHub only stores the code — there is no GitHub Actions workflow. Every build and test runs
+locally in Docker with one command (the same steps the GitHub runners used to do):
 
-GitHub Free private repos get 2,000 minutes/month; Linux counts 1×, macOS 10×. One code push
-to `main` costs about 170 billed minutes (CI ≈ 12, Windows/Linux ≈ 35, macOS ≈ 120), so about
-ten releases a month fit; docs-only pushes cost nothing, and a push to another branch runs only
-CI (≈ 12). The four secrets from `.signing/github-secrets.env` sign CI builds (already set).
+```sh
+scripts/local-ci.sh            # or: make ci — test → real agents → installers for every platform
+scripts/local-ci.sh test       # only the tests
+scripts/local-ci.sh package    # only the installers
+```
+
+1. **test** — UI typecheck/tests/build, rustfmt, clippy, every Rust test, Windows cross-check
+   (and macOS when the SDK is present).
+2. **agents** — real server + client agents on a virtual screen: connect, client restarts, self-test.
+3. **package** — Linux x64 `.deb`/`.rpm`/`.tar.gz`, Windows installer + offline installer +
+   portable zip, macOS `.dmg`, `SHA256SUMS` (signed with `.signing/` keys when present).
+
+A failing step stops the run, so nothing is packaged from code that failed a test. Installers go
+to `output-build/` (older files move to `output-build/previous-*/`). The macOS app needs the
+macOS SDK, which Apple allows only on Apple hardware: run `make sdk` and `scripts/local-ci.sh`
+on the Mac to include it; elsewhere it is reported as skipped. The Mac's real event-tap tests
+also need a Mac: `GLIDEDESK_TAP_TESTS=1 cargo test -p glidedesk-input`.
 
 Docs: `PLAN.md` (design), `docs/PROGRESS.md` (status), `docs/TESTING.md` (real-device checklist).

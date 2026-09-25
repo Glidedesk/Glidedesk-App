@@ -811,7 +811,7 @@ New requirements:
 | R27 | **One app** — no separate agent program; the same app is server or client |
 | R28 | Find and fix all bugs and vulnerabilities; update both apps |
 | R29 | Signed without any paid account |
-| R30 | GitHub Actions: build, test and publish releases on push, within free private-repo limits |
+| R30 | ~~GitHub Actions~~ → local Docker pipeline `scripts/local-ci.sh` (GitHub only stores the code) |
 
 ### 13.1 Decisions
 
@@ -842,17 +842,13 @@ Each starts the app with `--background` (tray only, no window).
 | Linux | `SHA256SUMS` signed with **minisign** (public key in the repo) | Anyone can verify downloads |
 `scripts/generate-signing-keys.sh` creates all three keys once. Nothing secret is ever committed.
 
-**CI within the free limits (R30).** 2,000 minutes/month; Linux counts 1×, Windows 2×, macOS 10×. Everything that can run on Linux does:
-| Trigger | Jobs (runner) | Est. billed minutes |
-|---|---|---|
-| Any push / PR | Lint + tests + UI tests + Windows cross-check (Linux x64) | ~12 |
-| Push to `main` | + Windows x64 installer (cross-built on Linux), Linux x64 packages, Linux ARM64 packages (ARM runner) → **"Nightly" pre-release** (replaced each time) | ~35 |
-| Tag `v*` (or manual run) | + **macOS ARM64** (macOS runner, only here) → full **Release** with every file | ~120 |
-- Caches cover cargo, pnpm and WebView2.
-- `concurrency` cancels superseded runs.
-- Docs-only changes skip the build.
-- Workflow artifacts are kept for 1 day to respect the 500 MB storage limit; release files don't count toward it.
-- A normal month (≈30 pushes, 2 releases) uses about 1,300 of the 2,000 minutes.
+**No GitHub CI any more (R30 replaced, 2026-09-26).** GitHub Actions ran out of the free
+private-repo minutes, so the workflows were removed and disabled: GitHub only stores the code.
+The same pipeline runs locally in Docker — `scripts/local-ci.sh` (`make ci`): tests (UI, rustfmt,
+clippy, every Rust test, cross-checks) → real server/client agents on a virtual screen → installers
+for Linux x64, Windows x64 and (with the macOS SDK, i.e. on the Mac) macOS, plus signed
+`SHA256SUMS` in `output-build/`. A failing step stops it before anything is packaged. Linux ARM64
+packages (built on GitHub's ARM runner before) are not built locally.
 
 The macOS build must run on a Mac runner: Apple's SDK licence forbids it on Linux hosts.
 

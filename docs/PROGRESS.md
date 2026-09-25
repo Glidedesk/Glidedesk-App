@@ -220,3 +220,13 @@ Known gaps (v4): still no real Windows device test from this Mac; the lab covers
       can't switch spaces or pull focus back). The "let through" marker is random per run.
       Real-tap test on macOS CI: the session tap is off, on while grabbed, off again.
       Reviewed by the ecc rust-reviewer agent (2 findings, both fixed).
+
+### No GitHub CI: local Docker pipeline for every platform
+- [x] GitHub Actions removed (`.github/workflows/` deleted, both workflows disabled with `gh`):
+      the private repo ran out of free minutes. GitHub only stores the code.
+- [x] `scripts/local-ci.sh` (`make ci`) does locally what the runners did: test (UI, rustfmt,
+      clippy, every Rust test, Windows/macOS cross-checks) → real server/client agents on a
+      virtual screen → installers (Linux x64, Windows x64, macOS when the SDK is present) +
+      signed SHA256SUMS in `output-build/`. Any failure stops it before packaging.
+      Not built locally: Linux ARM64 (was GitHub's ARM runner), and the macOS app / its real
+      event-tap tests on a non-Mac (Apple SDK licence).
