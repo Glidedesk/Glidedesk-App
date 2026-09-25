@@ -234,6 +234,8 @@ struct Hub {
     /// Diagnostics: first capture event seen, last "why no switch" log line.
     capture_seen: bool,
     last_edge_note: Option<(Instant, String)>,
+    /// Last layout summary logged ("PC is on the right of Mac").
+    layout_summary: String,
     /// Server password (PLAN §14.1); `None` = open.
     verifier: Option<Arc<glidedesk_net::auth::Verifier>>,
     throttle: Arc<glidedesk_net::auth::Throttle>,
@@ -324,6 +326,7 @@ impl Hub {
             last_sent: HashMap::new(),
             capture_seen: false,
             last_edge_note: None,
+            layout_summary: String::new(),
             verifier: config
                 .server
                 .network
@@ -430,9 +433,10 @@ impl Hub {
     /// Logs (at most every few seconds) why pushing an edge didn't switch, so
     /// "the mouse doesn't go to the other computer" can be diagnosed from the log.
     fn note_edge(&mut self, pos: Point, dx: i32, dy: i32, ctx: &EdgeContext) {
-        let Some(why) = self.engine.explain_edge(self.local_id, pos, dx, dy, ctx) else { return };
+        let Some(mut why) = self.engine.explain_edge(self.local_id, pos, dx, dy, ctx) else { return };
         if why == "not blocked" {
-            return;
+            // Allowed, yet no switch: the one case that must never be silent.
+            why = format!("the push was allowed but did not switch (dx={dx}, dy={dy}) — please report this");
         }
         let now = Instant::now();
         if self
@@ -612,7 +616,7 @@ impl Hub {
                 }
                 self.push_clipboard(machine);
                 self.check_secure_input();
-                debug!(client = %machine, "cursor entered client");
+                info!(client = %self.name_of(machine), x = pos.x, y = pos.y, "cursor went to another computer");
                 self.publish();
             }
             Outcome::Return { pos, previous } => {
@@ -620,7 +624,7 @@ impl Hub {
                 self.capture.set_grab(false);
                 self.capture.warp(pos);
                 self.last_local_pos = pos;
-                debug!("cursor returned home");
+                info!(x = pos.x, y = pos.y, "cursor came back to this computer");
                 self.publish();
             }
         }
@@ -1207,6 +1211,20 @@ impl Hub {
     }
 
     fn rebuild_layout(&mut self) {
+        let summary = self
+            .config
+            .layout
+            .links
+            .iter()
+            .map(|l| {
+                format!("{} is on the {:?} of {}", self.name_of(l.to), l.side, self.name_of(l.from)).to_lowercase()
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        if summary != self.layout_summary {
+            info!("layout: {}", if summary.is_empty() { "no computers placed" } else { &summary });
+            self.layout_summary = summary;
+        }
         let mut machines = vec![Machine { id: self.local_id, monitors: self.local_monitors.clone() }];
         machines.extend(
             self.slots

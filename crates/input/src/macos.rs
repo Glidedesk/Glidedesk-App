@@ -247,6 +247,11 @@ struct Shared {
     run_loop: OnceLock<SendRunLoop>,
     tap: OnceLock<SendPort>,
     pin: Mutex<Point>,
+    /// Where we last warped the cursor. The next motion event's delta fields
+    /// include the warp jump itself (seen as a huge move back across the edge,
+    /// which bounced the cursor straight home); that one event's movement is
+    /// measured from this point instead.
+    warped: Mutex<Option<Point>>,
     /// Device-dependent modifier bits last seen (to derive up/down).
     last_flags: Mutex<u64>,
     gate: crate::gate::KeyGate,
@@ -289,6 +294,7 @@ impl CaptureControl for Control {
             *lock(&self.0.pin) = pin;
             allow_background_cursor_hiding();
             repin(pin);
+            *lock(&self.0.warped) = Some(pin);
             let _ = CGDisplayHideCursor(CGMainDisplayID());
         } else {
             let _ = CGAssociateMouseAndMouseCursorPosition(true);
@@ -298,6 +304,7 @@ impl CaptureControl for Control {
 
     fn warp(&self, p: Point) {
         let _ = CGWarpMouseCursorPosition(cg(p));
+        *lock(&self.0.warped) = Some(p);
         // Warping briefly suppresses local events; re-associate immediately.
         if !self.0.grabbed.load(Ordering::SeqCst) {
             let _ = CGAssociateMouseAndMouseCursorPosition(true);
@@ -406,11 +413,16 @@ unsafe extern "C-unwind" fn tap_callback(
         | CGEventType::OtherMouseDragged => {
             let loc = CGEvent::location(Some(ev));
             let pos = Point::new(loc.x.floor() as i32, loc.y.floor() as i32);
-            let (dx, dy) = (field(CGEventField::MouseEventDeltaX) as i32, field(CGEventField::MouseEventDeltaY) as i32);
+            let (dx, dy) = match lock(&shared.warped).take() {
+                // First event after a warp: its delta fields contain the jump.
+                Some(from) => (pos.x - from.x, pos.y - from.y),
+                None => (field(CGEventField::MouseEventDeltaX) as i32, field(CGEventField::MouseEventDeltaY) as i32),
+            };
             let pos = if shared.grabbed.load(Ordering::Relaxed) {
                 let pin = *lock(&shared.pin);
                 if (pos.x - pin.x).abs() > REPIN_DRIFT || (pos.y - pin.y).abs() > REPIN_DRIFT {
                     repin(pin);
+                    *lock(&shared.warped) = Some(pin);
                 }
                 pin
             } else {
@@ -499,6 +511,7 @@ pub fn start_capture() -> Result<Capture, InputError> {
         run_loop: OnceLock::new(),
         tap: OnceLock::new(),
         pin: Mutex::new(Point::default()),
+        warped: Mutex::new(None),
         last_flags: Mutex::new(0),
         gate: crate::gate::KeyGate::default(),
     });
