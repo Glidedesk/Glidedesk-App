@@ -141,6 +141,9 @@ fn natural_scrolling() -> bool {
 /// producing motion.
 const REPIN_MARGIN: i32 = 120;
 
+/// Largest motion (points) accepted from one event; see the motion handler.
+const MAX_STEP: i32 = 250;
+
 /// Turns off the pause (default 0.25 s) macOS inserts after a cursor warp, during
 /// which it drops real mouse input — felt as stutter while another computer has
 /// control. The call is deprecated but still honoured; resolved at run time.
@@ -282,6 +285,8 @@ struct Shared {
     pin_rect: Mutex<Rect>,
     /// Sub-point motion carried to the next event (trackpads move in fractions).
     remainder: Mutex<(f64, f64)>,
+    /// When the hidden cursor was last pulled back to the pin.
+    last_repin: Mutex<Option<Instant>>,
     /// Device-dependent modifier bits last seen (to derive up/down).
     last_flags: Mutex<u64>,
     gate: crate::gate::KeyGate,
@@ -446,9 +451,10 @@ unsafe extern "C-unwind" fn tap_callback(
             let loc = CGEvent::location(Some(ev));
             let pos = Point::new(loc.x.floor() as i32, loc.y.floor() as i32);
             let warped = lock(&shared.warped).take();
-            let (dx, dy) = if let Some(from) = warped {
-                // First event after a warp: its delta fields contain the jump.
-                (pos.x - from.x, pos.y - from.y)
+            let (dx, dy) = if warped.is_some() {
+                // First event after a warp: its delta fields contain the jump
+                // (and its location may predate it). Drop this one event's motion.
+                (0, 0)
             } else {
                 // Fractional deltas (trackpads), carrying what is left over.
                 let fdx = CGEvent::double_value_field(Some(ev), CGEventField::MouseEventDeltaX);
@@ -457,18 +463,27 @@ unsafe extern "C-unwind" fn tap_callback(
                 let (x, y) = (fdx + rem.0, fdy + rem.1);
                 let (ix, iy) = (x.trunc(), y.trunc());
                 *rem = (x - ix, y - iy);
-                (ix as i32, iy as i32)
+                // Safety net: no real device moves this far in one event; a
+                // larger value is a warp artefact and would fling the cursor.
+                ((ix as i32).clamp(-MAX_STEP, MAX_STEP), (iy as i32).clamp(-MAX_STEP, MAX_STEP))
             };
             let pos = if shared.grabbed.load(Ordering::Relaxed) {
                 let pin = *lock(&shared.pin);
                 let r = *lock(&shared.pin_rect);
-                let near_edge = pos.x < r.x + REPIN_MARGIN
-                    || pos.x >= r.right() - REPIN_MARGIN
-                    || pos.y < r.y + REPIN_MARGIN
-                    || pos.y >= r.bottom() - REPIN_MARGIN;
-                if near_edge {
-                    repin(pin);
-                    *lock(&shared.warped) = Some(pin);
+                // Judge by where the cursor really is (the event's own location can
+                // lag behind a warp), and pull it back at most every 100 ms.
+                let now = Instant::now();
+                let due = lock(&shared.last_repin).is_none_or(|t| now.duration_since(t) > Duration::from_millis(100));
+                if due && let Some(real) = cursor_pos() {
+                    let near_edge = real.x < r.x + REPIN_MARGIN
+                        || real.x >= r.right() - REPIN_MARGIN
+                        || real.y < r.y + REPIN_MARGIN
+                        || real.y >= r.bottom() - REPIN_MARGIN;
+                    if near_edge {
+                        repin(pin);
+                        *lock(&shared.warped) = Some(pin);
+                        *lock(&shared.last_repin) = Some(now);
+                    }
                 }
                 pin
             } else {
@@ -560,6 +575,7 @@ pub fn start_capture() -> Result<Capture, InputError> {
         warped: Mutex::new(None),
         pin_rect: Mutex::new(Rect::default()),
         remainder: Mutex::new((0.0, 0.0)),
+        last_repin: Mutex::new(None),
         last_flags: Mutex::new(0),
         gate: crate::gate::KeyGate::default(),
     });
