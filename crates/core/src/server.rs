@@ -23,7 +23,8 @@ use crate::health::{Health, HealthConfig, HealthState};
 use crate::{CoreError, MonitorSource, Notice};
 use glidedesk_ipc::views::{BindView, ClientView, MachineView, ServerView};
 
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Includes the client's Argon2 password hashing when a password is set.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const MONITOR_POLL: Duration = Duration::from_secs(2);
 const INPUT_QUEUE: usize = 1024;
 const CONTROL_QUEUE: usize = 64;
@@ -101,7 +102,7 @@ pub fn start(config: Config, deps: ServerDeps) -> Result<ServerHandle, CoreError
             glidedesk_config::BindMode::All => None,
             _ => Some((net_cfg.interfaces.as_slice(), net_cfg.addresses.as_slice())),
         };
-        match Advertiser::start(config.device.id, &name, &deps.app_version, port, scope) {
+        match Advertiser::start(config.device.id, &name, &deps.host_name, &deps.app_version, port, scope) {
             Ok(a) => Some(a),
             Err(e) => {
                 warn!(error = %e, "mDNS announcement failed; clients must use the address");
@@ -140,10 +141,12 @@ enum HubEvent {
     },
     Hello {
         conn: quinn::Connection,
-        send: quinn::SendStream,
+        writer: FrameWriter,
         reader: FrameReader,
         hello: Box<Hello>,
         addr: SocketAddr,
+        /// Our password proof for the `Welcome` (only when a password is set).
+        proof: Option<Vec<u8>>,
     },
     Control {
         id: DeviceId,
@@ -218,6 +221,9 @@ struct Hub {
     fullscreen: Option<(Instant, bool)>,
     /// Clipboard sequence last sent to each client.
     last_sent: HashMap<DeviceId, u64>,
+    /// Server password (PLAN §14.1); `None` = open.
+    verifier: Option<Arc<glidedesk_net::auth::Verifier>>,
+    throttle: Arc<glidedesk_net::auth::Throttle>,
 }
 
 fn health_cfg(c: &Config) -> HealthConfig {
@@ -303,6 +309,14 @@ impl Hub {
             sync: crate::sync::Sync::new(deps.clipboard),
             fullscreen: None,
             last_sent: HashMap::new(),
+            verifier: config
+                .server
+                .network
+                .password
+                .as_ref()
+                .and_then(|p| glidedesk_net::auth::Verifier::from_hex(&p.salt, &p.key))
+                .map(Arc::new),
+            throttle: Arc::default(),
             config,
         };
         hub.load_hotkeys();
@@ -615,15 +629,22 @@ impl Hub {
             inc.refuse();
             return;
         }
+        if self.throttle.blocked(addr.ip(), Instant::now()) {
+            debug!(%addr, "refused: too many wrong passwords");
+            inc.refuse();
+            return;
+        }
         if self.slots.values().filter(|s| s.conn.is_some()).count() >= MAX_CLIENTS {
             inc.refuse();
             return;
         }
         let tx = self.event_tx.clone();
+        let (verifier, throttle) = (self.verifier.clone(), self.throttle.clone());
         tokio::spawn(async move {
-            match tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake(inc)).await {
-                Ok(Ok((conn, send, reader, hello))) => {
-                    let _ = tx.send(HubEvent::Hello { conn, send, reader, hello: Box::new(hello), addr }).await;
+            match tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake(inc, verifier, throttle)).await {
+                Ok(Ok((conn, writer, reader, hello, proof))) => {
+                    let _ =
+                        tx.send(HubEvent::Hello { conn, writer, reader, hello: Box::new(hello), addr, proof }).await;
                 }
                 Ok(Err(e)) => debug!(%addr, error = %e, "handshake failed"),
                 Err(_) => debug!(%addr, "handshake timed out"),
@@ -633,7 +654,9 @@ impl Hub {
 
     fn on_event(&mut self, ev: HubEvent) {
         match ev {
-            HubEvent::Hello { conn, send, reader, hello, addr } => self.on_hello(conn, send, reader, *hello, addr),
+            HubEvent::Hello { conn, writer, reader, hello, addr, proof } => {
+                self.on_hello(conn, writer, reader, *hello, addr, proof);
+            }
             HubEvent::Control { id, generation, msg } => {
                 if self.slots.get(&id).and_then(|s| s.conn.as_ref()).is_some_and(|c| c.generation == generation) {
                     self.on_control(id, msg);
@@ -656,10 +679,11 @@ impl Hub {
     fn on_hello(
         &mut self,
         conn: quinn::Connection,
-        send: quinn::SendStream,
+        writer: FrameWriter,
         reader: FrameReader,
         hello: Hello,
         addr: SocketAddr,
+        proof: Option<Vec<u8>>,
     ) {
         let id = hello.device_id;
         let reject = if hello.protocol != PROTOCOL_VERSION {
@@ -674,7 +698,7 @@ impl Hub {
         if let Some(reason) = reject {
             info!(client = %id, ?reason, "client rejected");
             tokio::spawn(async move {
-                let mut w = FrameWriter::new(send, MAX_CONTROL_FRAME);
+                let mut w = writer;
                 let _ = w.send(&Control::Reject(reason)).await;
                 w.finish();
                 tokio::time::sleep(Duration::from_millis(200)).await;
@@ -703,7 +727,7 @@ impl Hub {
         self.next_generation += 1;
         let (control_tx, control_rx) = mpsc::channel(CONTROL_QUEUE);
         let (input_tx, input_rx) = mpsc::channel(INPUT_QUEUE);
-        spawn_control_writer(send, control_rx, id, generation, self.event_tx.clone());
+        spawn_control_writer(writer, control_rx, id, generation, self.event_tx.clone());
         spawn_input_writer(conn.clone(), input_rx, id, generation, self.event_tx.clone());
         spawn_reader(reader, id, generation, self.event_tx.clone());
         spawn_uni_acceptor(conn.clone(), id, generation, self.event_tx.clone());
@@ -743,6 +767,7 @@ impl Hub {
             name: self.local_name.clone(),
             platform: self.local_platform,
             settings: self.settings_for(id),
+            auth_proof: proof,
         });
         self.send_control(id, welcome);
         let _ = self.notice_tx.try_send(Notice::MonitorsSeen { id, monitors });
@@ -1216,27 +1241,64 @@ impl Hub {
 // connection tasks
 // ---------------------------------------------------------------------------
 
+type Handshake = (quinn::Connection, FrameWriter, FrameReader, Hello, Option<Vec<u8>>);
+
+/// Reads `Hello` and, when a password is set, runs the PAKE (PLAN §14.1).
+/// Nothing about a client is kept before it passes.
 async fn handshake(
     inc: quinn::Incoming,
-) -> Result<(quinn::Connection, quinn::SendStream, FrameReader, Hello), CoreError> {
-    let conn = inc.await.map_err(|e| CoreError::Net(e.to_string()))?;
-    let (send, recv) = conn.accept_bi().await.map_err(|e| CoreError::Net(e.to_string()))?;
+    verifier: Option<Arc<glidedesk_net::auth::Verifier>>,
+    throttle: Arc<glidedesk_net::auth::Throttle>,
+) -> Result<Handshake, CoreError> {
+    use glidedesk_net::auth::{EXPORTER_LABEL, ServerChallenge};
+    let net = |e: &dyn std::fmt::Display| CoreError::Net(e.to_string());
+    let conn = inc.await.map_err(|e| net(&e))?;
+    let (send, recv) = conn.accept_bi().await.map_err(|e| net(&e))?;
     let mut reader = FrameReader::new(recv, MAX_CONTROL_FRAME);
-    match reader.recv::<Control>().await.map_err(|e| CoreError::Net(e.to_string()))? {
-        Some(Control::Hello(h)) => Ok((conn, send, reader, h)),
-        _ => Err(CoreError::Protocol("expected Hello".into())),
+    let mut writer = FrameWriter::new(send, MAX_CONTROL_FRAME);
+    let Some(Control::Hello(hello)) = reader.recv::<Control>().await.map_err(|e| net(&e))? else {
+        return Err(CoreError::Protocol("expected Hello".into()));
+    };
+    // Old clients are told to update by `on_hello`; they can't do the PAKE.
+    let Some(v) = verifier.filter(|_| hello.protocol == PROTOCOL_VERSION) else {
+        return Ok((conn, writer, reader, hello, None));
+    };
+    let ip = conn.remote_address().ip();
+    let challenge = ServerChallenge::start(&v);
+    let msg = Control::AuthChallenge { salt: v.salt.to_vec(), message: challenge.message.clone() };
+    writer.send(&msg).await.map_err(|e| net(&e))?;
+    let Some(Control::AuthResponse { message, proof }) = reader.recv::<Control>().await.map_err(|e| net(&e))? else {
+        // The client has no password: it shows "password required" itself.
+        return Err(CoreError::Protocol("client has no password".into()));
+    };
+    let mut exporter = [0u8; 32];
+    conn.export_keying_material(&mut exporter, EXPORTER_LABEL, b"").map_err(|_| net(&"TLS exporter"))?;
+    match challenge.finish(&message, &proof, &exporter) {
+        Ok(server_proof) => {
+            throttle.success(ip);
+            Ok((conn, writer, reader, hello, Some(server_proof.to_vec())))
+        }
+        Err(e) => {
+            let wait = throttle.fail(ip, Instant::now());
+            warn!(%ip, lockout_s = wait.as_secs(), "wrong password from a client");
+            let reason = if wait.is_zero() { RejectReason::WrongPassword } else { RejectReason::TooManyAttempts };
+            let _ = writer.send(&Control::Reject(reason)).await;
+            writer.finish();
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            conn.close(1u32.into(), b"authentication failed");
+            Err(CoreError::Protocol(e.to_string()))
+        }
     }
 }
 
 fn spawn_control_writer(
-    send: quinn::SendStream,
+    mut w: FrameWriter,
     mut rx: mpsc::Receiver<Control>,
     id: DeviceId,
     generation: u64,
     events: mpsc::Sender<HubEvent>,
 ) {
     tokio::spawn(async move {
-        let mut w = FrameWriter::new(send, MAX_CONTROL_FRAME);
         while let Some(msg) = rx.recv().await {
             let last = matches!(msg, Control::Goodbye(_));
             if let Err(e) = w.send(&msg).await {

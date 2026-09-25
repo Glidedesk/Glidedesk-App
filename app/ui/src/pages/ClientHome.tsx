@@ -53,8 +53,11 @@ export function ClientHome({ status, config, update }: { status: AgentStatus; co
         {c?.message && <div className="mt-2 text-muted">{c.message}</div>}
       </div>
       <Section title="Server">
-        <Row label="Server address" hint="Leave empty to find the server automatically. Otherwise a name or IP, optionally with :port.">
+        <Row label="Server address" hint="Leave empty to find the server automatically, or type its computer name (e.g. Studio-Mac) or IP address, optionally with :port.">
           <TextInput label="Server address" value={cl.server_address} placeholder="Automatic" onChange={(v) => update((x) => void (x.client.server_address = v.trim()))} />
+        </Row>
+        <Row label="Password" hint="Only if the server has a password (Network → Password on the server).">
+          <TextInput type="password" label="Server password" value={cl.password} placeholder="None" onChange={(v) => update((x) => void (x.client.password = v))} />
         </Row>
       </Section>
       <Section title="Overrides" description="Settings here win over the server's settings for this computer.">

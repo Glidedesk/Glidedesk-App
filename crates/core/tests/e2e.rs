@@ -300,3 +300,94 @@ async fn clipboard_and_files_follow_the_cursor() {
     cli.commands.send(glidedesk_core::ClientCommand::Shutdown(GoodbyeReason::Quitting)).await.unwrap();
     srv.commands.send(ServerCommand::Shutdown(GoodbyeReason::Stopping)).await.unwrap();
 }
+
+fn start_client(cfg: Config, injector: &MockInjector) -> glidedesk_core::ClientHandle {
+    client::start(
+        cfg,
+        ClientDeps {
+            injector: Box::new(injector.clone()),
+            monitors: source(monitor(800, 600)),
+            status: Arc::new(glidedesk_proto::ClientStatus::default),
+            app_version: "test".into(),
+            host_name: "client-host".into(),
+            preferred_server: None,
+            clipboard: None,
+        },
+    )
+}
+
+/// PLAN §14.1: a server with a password only admits clients that know it,
+/// never lists the others, and a client with a password never trusts an open server.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn password_protects_the_server() {
+    let mut scfg = server_config();
+    let v = glidedesk_net::auth::Verifier::new("hunter22").unwrap();
+    let (salt, key) = v.to_hex();
+    scfg.server.network.password = Some(glidedesk_config::StoredPassword { salt, key });
+    let (capture, _cap_tx, _cap_ctl) = mock::capture();
+    let deps = ServerDeps {
+        capture,
+        monitors: source(monitor(1000, 500)),
+        known_monitors: HashMap::new(),
+        app_version: "test".into(),
+        host_name: "server-host".into(),
+        clipboard: None,
+    };
+    let srv = server::start(scfg, deps).expect("server starts");
+    let mut srv_status = srv.status.clone();
+    let view = wait_for(&mut srv_status, "server running", |v| v.running).await;
+    let addr: std::net::SocketAddr = view.bind.iter().find(|b| b.error.is_none()).unwrap().addr.parse().unwrap();
+
+    let mut ccfg = Config::default();
+    ccfg.device.id = CLIENT_ID;
+    ccfg.device.role = Role::Client;
+    ccfg.client.server_address = addr.to_string();
+
+    // No password → refused, not listed.
+    let inj = MockInjector::default();
+    let none = start_client(ccfg.clone(), &inj);
+    let mut st = none.status.clone();
+    let v = wait_for(&mut st, "refused without password", |v| v.state == LinkState::Rejected).await;
+    assert!(v.message.unwrap_or_default().contains("needs a password"));
+    assert!(srv_status.borrow().clients.is_empty(), "unauthenticated client listed");
+
+    // Wrong password → refused; the right one (new settings) → connected.
+    let mut wrong = ccfg.clone();
+    wrong.client.password = "nope-nope".into();
+    none.commands.send(glidedesk_core::ClientCommand::ApplyConfig(Box::new(wrong))).await.unwrap();
+    let v = wait_for(&mut st, "wrong password", |v| v.message.as_deref().is_some_and(|m| m.contains("wrong password"))).await;
+    assert_eq!(v.state, LinkState::Rejected);
+    assert!(srv_status.borrow().clients.is_empty());
+
+    let mut right = ccfg.clone();
+    right.client.password = "hunter22".into();
+    none.commands.send(glidedesk_core::ClientCommand::ApplyConfig(Box::new(right.clone()))).await.unwrap();
+    wait_for(&mut st, "connected with password", |v| v.state == LinkState::Connected).await;
+    wait_for(&mut srv_status, "listed", |v| v.clients.iter().any(|c| c.id == CLIENT_ID)).await;
+    none.commands.send(glidedesk_core::ClientCommand::Shutdown(GoodbyeReason::Quitting)).await.unwrap();
+    srv.commands.send(ServerCommand::Shutdown(GoodbyeReason::Stopping)).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), srv.task).await.unwrap().unwrap();
+
+    // A client with a password refuses a server without one (it could be an impostor).
+    let (capture, _t, _c) = mock::capture();
+    let open = server::start(
+        server_config(),
+        ServerDeps {
+            capture,
+            monitors: source(monitor(1000, 500)),
+            known_monitors: HashMap::new(),
+            app_version: "test".into(),
+            host_name: "server-host".into(),
+            clipboard: None,
+        },
+    )
+    .unwrap();
+    let mut os = open.status.clone();
+    let view = wait_for(&mut os, "open server running", |v| v.running).await;
+    right.client.server_address = view.bind.iter().find(|b| b.error.is_none()).unwrap().addr.clone();
+    let cautious = start_client(right, &MockInjector::default());
+    let mut cs = cautious.status.clone();
+    let v = wait_for(&mut cs, "refuses open server", |v| v.state == LinkState::Rejected).await;
+    assert!(v.message.unwrap_or_default().contains("doesn't use one"));
+    open.commands.send(ServerCommand::Shutdown(GoodbyeReason::Stopping)).await.unwrap();
+}

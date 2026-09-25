@@ -8,6 +8,7 @@ export function Wizard({ status, config, onDone }: { status: AgentStatus; config
   const [step, setStep] = useState(0);
   const [role, setRole] = useState<Role>("server");
   const [address, setAddress] = useState("");
+  const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const { commit } = useConfig();
   const mac = status.platform === "macos";
@@ -16,7 +17,10 @@ export function Wizard({ status, config, onDone }: { status: AgentStatus; config
     try {
       const next = structuredClone(config);
       next.device.role = role;
-      if (role === "client") next.client.server_address = address.trim();
+      if (role === "client") {
+        next.client.server_address = address.trim();
+        next.client.password = password;
+      }
       await commit(next);
       onDone();
     } catch (e) {
@@ -87,8 +91,10 @@ export function Wizard({ status, config, onDone }: { status: AgentStatus; config
       ) : (
         <>
           <h2 className="text-[22px] font-semibold">Find the server</h2>
-          <p className="text-muted">Leave empty to find it automatically on this network, or type its name or IP address.</p>
+          <p className="text-muted">Leave empty to find it automatically on this network, or type its computer name or IP address.</p>
           <TextInput label="Server address" value={address} placeholder="Automatic" onChange={setAddress} width="w-80" />
+          <p className="text-muted">If the server has a password, enter it here.</p>
+          <TextInput type="password" label="Server password" value={password} placeholder="No password" onChange={setPassword} width="w-80" />
         </>
       )}
     </div>,

@@ -33,6 +33,7 @@ export const api = {
   resetConfig: () => agent({ cmd: "reset_config" }),
   /** Asks macOS from the app itself, so the prompt names Glidedesk. */
   requestPermissions: () => invoke<void>("request_permissions"),
+  setServerPassword: (password: string) => agent({ cmd: "set_server_password", password }),
   selfTest: () => agent<Record<string, unknown>>({ cmd: "self_test" }),
   exportSettings: (layoutOnly: boolean) => invoke<boolean>("export_settings", { layoutOnly }),
   importSettings: () => invoke<ImportPreview | null>("import_settings"),

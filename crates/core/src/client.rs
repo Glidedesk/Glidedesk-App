@@ -122,8 +122,24 @@ fn prefs(cfg: &Config) -> ClientPrefs {
     }
 }
 
-/// `host`, `host:port`, `ip`, `ip:port`, `[v6]:port`.
-async fn resolve(address: &str) -> Result<Vec<SocketAddr>, CoreError> {
+/// Splits `name[:port]` (a bare IPv6 address has several colons: no port).
+fn split_port(a: &str) -> (&str, Option<u16>) {
+    match a.rsplit_once(':') {
+        Some((host, p)) if !host.contains(':') => p.parse().map_or((a, None), |p| (host, Some(p))),
+        _ => (a, None),
+    }
+}
+
+async fn dns(host: &str, port: u16) -> Option<Vec<SocketAddr>> {
+    let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, port)).await.ok()?.collect();
+    (!addrs.is_empty()).then_some(addrs)
+}
+
+/// Resolves what the user typed as the server (§14 B3): an IP (`ip`, `ip:port`,
+/// `[v6]:port`), or a **computer name** — matched against Glidedesk servers
+/// announced on the network (display or computer name), then `name.local`
+/// (mDNS) and DNS. Whichever answers first wins.
+async fn resolve(address: &str, interface: &str) -> Result<Vec<SocketAddr>, CoreError> {
     let a = address.trim();
     if let Ok(sa) = a.parse::<SocketAddr>() {
         return Ok(vec![sa]);
@@ -131,19 +147,40 @@ async fn resolve(address: &str) -> Result<Vec<SocketAddr>, CoreError> {
     if let Ok(ip) = a.trim_matches(['[', ']']).parse::<IpAddr>() {
         return Ok(vec![SocketAddr::new(ip, DEFAULT_PORT)]);
     }
-    let with_port = if a.rsplit_once(':').is_some_and(|(_, p)| p.parse::<u16>().is_ok()) {
-        a.to_owned()
-    } else {
-        format!("{a}:{DEFAULT_PORT}")
-    };
-    let addrs: Vec<SocketAddr> = tokio::net::lookup_host(with_port)
-        .await
-        .map_err(|e| CoreError::Net(format!("cannot resolve '{a}': {e}")))?
-        .collect();
-    if addrs.is_empty() {
-        return Err(CoreError::Net(format!("'{a}' has no addresses")));
+    let (host, port) = split_port(a);
+    if host.is_empty() || host.len() > 253 || host.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err(CoreError::Net(format!("'{a}' is not a computer name or address")));
     }
-    Ok(addrs)
+    let announced = async {
+        let Ok((_browser, mut rx)) = Browser::start(Some(interface)) else { return std::future::pending().await };
+        while let Some(ev) = rx.recv().await {
+            if let DiscoveryEvent::Found(ad) = ev
+                && ad.protocol == PROTOCOL_VERSION
+                && ad.matches_name(host)
+            {
+                return ad.addrs.iter().map(|ip| SocketAddr::new(*ip, port.unwrap_or(ad.port))).collect();
+            }
+        }
+        std::future::pending().await
+    };
+    let by_dns = async {
+        let p = port.unwrap_or(DEFAULT_PORT);
+        let local = if host.contains('.') { None } else { dns(&format!("{host}.local"), p).await };
+        match local {
+            Some(a) => a,
+            None => match dns(host, p).await {
+                Some(a) => a,
+                None => std::future::pending().await,
+            },
+        }
+    };
+    tokio::select! {
+        a = announced => Ok(a),
+        a = by_dns => Ok(a),
+        () = tokio::time::sleep(Duration::from_secs(8)) => {
+            Err(CoreError::Net(format!("can't find a computer called '{host}' on the network")))
+        }
+    }
 }
 
 /// IP of the chosen local interface, if the user picked one.
@@ -162,7 +199,25 @@ enum SessionEnd {
     Command(ClientCommand),
     Lost(String),
     Rejected(RejectReason),
+    /// Password problem: retrying can't help (and would trip the server's
+    /// lockout), so wait until the settings change or the user reconnects.
+    Auth(String),
     Goodbye(GoodbyeReason),
+}
+
+fn reject_text(r: RejectReason) -> String {
+    match r {
+        RejectReason::IncompatibleProtocol => {
+            "the server runs a different Glidedesk version; update both computers".into()
+        }
+        RejectReason::Blocked => "this computer is blocked on the server".into(),
+        RejectReason::NotAllowed => "the server doesn't accept this computer".into(),
+        RejectReason::ServerStopping => "the server is stopping".into(),
+        RejectReason::RoleMismatch => "the other computer is not a server".into(),
+        RejectReason::WrongPassword => "wrong password — check it under Server".into(),
+        RejectReason::PasswordRequired => "the server needs a password — enter it under Server".into(),
+        RejectReason::TooManyAttempts => "too many wrong passwords; the server blocks this computer for a while".into(),
+    }
 }
 
 struct Runner {
@@ -218,10 +273,30 @@ async fn run(
                 backoff = BACKOFF_MIN;
                 continue;
             }
+            SessionEnd::Rejected(reason)
+                if matches!(
+                    reason,
+                    RejectReason::WrongPassword | RejectReason::PasswordRequired | RejectReason::TooManyAttempts
+                ) =>
+            {
+                let text = reject_text(reason);
+                if !r.wait_for_change(&mut cmds, text).await {
+                    break;
+                }
+                backoff = BACKOFF_MIN;
+                continue;
+            }
+            SessionEnd::Auth(text) => {
+                if !r.wait_for_change(&mut cmds, text).await {
+                    break;
+                }
+                backoff = BACKOFF_MIN;
+                continue;
+            }
             SessionEnd::Rejected(reason) => {
                 r.update(|v| {
                     v.state = LinkState::Rejected;
-                    v.message = Some(format!("the server refused the connection ({reason:?})"));
+                    v.message = Some(reject_text(reason));
                     v.active = false;
                 });
                 backoff = BACKOFF_MAX * 2;
@@ -267,6 +342,26 @@ async fn run(
 }
 
 impl Runner {
+    /// Shows `text` as a refusal and waits for new settings or "Reconnect".
+    /// Returns `false` when the client must stop.
+    async fn wait_for_change(&mut self, cmds: &mut mpsc::Receiver<ClientCommand>, text: String) -> bool {
+        warn!(reason = %text, "not connecting");
+        self.update(|v| {
+            v.state = LinkState::Rejected;
+            v.message = Some(text);
+            v.active = false;
+            v.latency_ms = None;
+        });
+        match cmds.recv().await {
+            Some(ClientCommand::ApplyConfig(c)) => {
+                self.config = *c;
+                true
+            }
+            Some(ClientCommand::Reconnect) => true,
+            Some(ClientCommand::Shutdown(_)) | None => false,
+        }
+    }
+
     fn update(&self, f: impl FnOnce(&mut ClientSideView)) {
         self.status.send_modify(|v| {
             f(v);
@@ -287,7 +382,11 @@ impl Runner {
                 v.state = LinkState::Connecting;
                 v.server_address = Some(configured.clone());
             });
-            return resolve(&configured).await.map_err(|e| SessionEnd::Lost(e.to_string()));
+            let interface = self.config.client.interface.clone();
+            return tokio::select! {
+                r = resolve(&configured, &interface) => r.map_err(|e| SessionEnd::Lost(e.to_string())),
+                cmd = cmds.recv() => Err(SessionEnd::Command(cmd.unwrap_or(ClientCommand::Shutdown(GoodbyeReason::Stopping)))),
+            };
         }
         self.update(|v| {
             v.state = LinkState::Searching;
@@ -417,13 +516,58 @@ impl Runner {
         if let Err(e) = control.send(&Control::Hello(self.hello())).await {
             return SessionEnd::Lost(e.to_string());
         }
-        let welcome = match tokio::time::timeout(CONNECT_TIMEOUT, reader.recv::<Control>()).await {
-            Ok(Ok(Some(Control::Welcome(w)))) => w,
-            Ok(Ok(Some(Control::Reject(r)))) => return SessionEnd::Rejected(r),
-            Ok(Ok(_)) => return SessionEnd::Lost("unexpected reply from server".into()),
-            Ok(Err(e)) => return SessionEnd::Lost(e.to_string()),
-            Err(_) => return SessionEnd::Lost("server did not answer".into()),
+        let mut expected_proof: Option<[u8; glidedesk_net::auth::PROOF_LEN]> = None;
+        let welcome = loop {
+            match tokio::time::timeout(CONNECT_TIMEOUT, reader.recv::<Control>()).await {
+                Ok(Ok(Some(Control::Welcome(w)))) => break w,
+                Ok(Ok(Some(Control::Reject(r)))) => return SessionEnd::Rejected(r),
+                Ok(Ok(Some(Control::AuthChallenge { salt, message }))) if expected_proof.is_none() => {
+                    let password = self.config.client.password.clone();
+                    if password.is_empty() {
+                        let _ = control.send(&Control::Goodbye(GoodbyeReason::Disconnected)).await;
+                        conn.close(0u32.into(), b"password required");
+                        return SessionEnd::Rejected(RejectReason::PasswordRequired);
+                    }
+                    let mut exporter = [0u8; 32];
+                    if conn.export_keying_material(&mut exporter, glidedesk_net::auth::EXPORTER_LABEL, b"").is_err() {
+                        return SessionEnd::Lost("TLS exporter unavailable".into());
+                    }
+                    let answer = tokio::task::spawn_blocking(move || {
+                        glidedesk_net::auth::client_answer(&password, &salt, &message, &exporter)
+                    })
+                    .await;
+                    let answer = match answer {
+                        Ok(Ok(a)) => a,
+                        Ok(Err(e)) => return SessionEnd::Lost(format!("password check failed: {e}")),
+                        Err(e) => return SessionEnd::Lost(e.to_string()),
+                    };
+                    expected_proof = Some(answer.expected_server_proof);
+                    let reply = Control::AuthResponse { message: answer.message, proof: answer.proof.to_vec() };
+                    if let Err(e) = control.send(&reply).await {
+                        return SessionEnd::Lost(e.to_string());
+                    }
+                }
+                Ok(Ok(_)) => return SessionEnd::Lost("unexpected reply from server".into()),
+                Ok(Err(e)) => return SessionEnd::Lost(e.to_string()),
+                Err(_) => return SessionEnd::Lost("server did not answer".into()),
+            }
         };
+        // Mutual check: a computer with a password only trusts a server that proves it too.
+        if !self.config.client.password.is_empty() {
+            let ok = match (&expected_proof, &welcome.auth_proof) {
+                (Some(want), Some(got)) => glidedesk_net::auth::server_proof_ok(want, got),
+                _ => false,
+            };
+            if !ok {
+                conn.close(0u32.into(), b"server not verified");
+                return SessionEnd::Auth(if welcome.auth_proof.is_none() {
+                    "a password is set here, but the server doesn't use one — remove it here or set it on the server"
+                        .into()
+                } else {
+                    "the server couldn't prove it knows the password; not connecting".into()
+                });
+            }
+        }
         let mut settings: ClientSettings = welcome.settings;
         let (taken_tx, mut taken_rx) = mpsc::channel::<glidedesk_proto::FileSetId>(8);
         // The first unidirectional stream is the input stream; anything else
@@ -556,7 +700,8 @@ impl Runner {
                     match cmd {
                         ClientCommand::ApplyConfig(c) => {
                             let address_changed = c.client.server_address != self.config.client.server_address
-                                || c.client.interface != self.config.client.interface;
+                                || c.client.interface != self.config.client.interface
+                                || c.client.password != self.config.client.password;
                             self.config = *c;
                             if address_changed {
                                 let _ = control.send(&Control::Goodbye(GoodbyeReason::Restarting)).await;
@@ -582,5 +727,27 @@ impl Runner {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn port_split_handles_names_and_ipv6() {
+        assert_eq!(split_port("office-pc"), ("office-pc", None));
+        assert_eq!(split_port("office-pc:9000"), ("office-pc", Some(9000)));
+        assert_eq!(split_port("fe80::1"), ("fe80::1", None));
+        assert_eq!(split_port("name:notaport"), ("name:notaport", None));
+    }
+
+    #[tokio::test]
+    async fn ip_addresses_resolve_without_lookups() {
+        let a = resolve("192.168.1.20", "").await.unwrap();
+        assert_eq!(a, vec![SocketAddr::new("192.168.1.20".parse().unwrap(), DEFAULT_PORT)]);
+        let b = resolve("[fe80::1]:9000", "").await.unwrap();
+        assert_eq!(b[0].port(), 9000);
+        assert!(resolve("bad name", "").await.is_err());
     }
 }

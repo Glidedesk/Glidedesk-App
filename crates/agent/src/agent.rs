@@ -509,6 +509,26 @@ impl Agent {
                 Ok(Value::Null)
             }
             Request::SelfTest => Ok(crate::selftest::run(matches!(self.runtime, Runtime::Server(_)))),
+            Request::SetServerPassword { password } => {
+                let mut cfg = self.config.clone();
+                cfg.server.network.password = if password.is_empty() {
+                    None
+                } else {
+                    if password.chars().count() > 256 {
+                        return Err("the password is too long (256 characters at most)".into());
+                    }
+                    let v = tokio::task::spawn_blocking(move || glidedesk_net::auth::Verifier::new(&password))
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .map_err(|e| e.to_string())?;
+                    let (salt, key) = v.to_hex();
+                    Some(glidedesk_config::StoredPassword { salt, key })
+                };
+                // Network settings changed: sharing restarts and every client signs in again.
+                let out = self.apply_config(cfg, &[]).await;
+                let _ = self.events.send(Event::ConfigChanged);
+                out
+            }
         }
     }
 }

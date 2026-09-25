@@ -4,6 +4,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod auth;
 pub mod discovery;
 pub mod framed;
 pub mod interfaces;

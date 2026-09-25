@@ -143,6 +143,22 @@ pub struct Network {
     pub block_list: Vec<String>,
     /// Announce with mDNS on the bound interfaces.
     pub discovery: bool,
+    /// Clients must know this password (PLAN §14.1). Only a salted Argon2id key
+    /// is stored, never the password. `None` = open.
+    pub password: Option<StoredPassword>,
+}
+
+/// Salt and Argon2id-derived key of the server password, hex encoded.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredPassword {
+    pub salt: String,
+    pub key: String,
+}
+
+impl std::fmt::Debug for StoredPassword {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("StoredPassword(..)")
+    }
 }
 
 impl Default for Network {
@@ -156,6 +172,7 @@ impl Default for Network {
             allow_list: Vec::new(),
             block_list: Vec::new(),
             discovery: true,
+            password: None,
         }
     }
 }
@@ -322,8 +339,10 @@ impl Server {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Client {
-    /// `host`, `host:port`, `ip`, `ip:port`; empty = find with mDNS.
+    /// Computer name, `host`, `host:port`, `ip`, `ip:port`; empty = find with mDNS.
     pub server_address: String,
+    /// The server's password, if it has one (kept in this private settings file).
+    pub password: String,
     /// Interface used to reach the server; empty = any.
     pub interface: String,
     /// Where received files land; `None` = Downloads.
@@ -345,6 +364,7 @@ impl Default for Client {
     fn default() -> Self {
         Self {
             server_address: String::new(),
+            password: String::new(),
             interface: String::new(),
             receive_dir: None,
             accept_clipboard: true,

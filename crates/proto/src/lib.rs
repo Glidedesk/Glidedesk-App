@@ -21,8 +21,9 @@ use serde::{Deserialize, Serialize};
 pub use geom::{Point, Rect, Side};
 
 /// Wire protocol version. Bump on any incompatible change.
-pub const PROTOCOL_VERSION: u16 = 1;
-/// QUIC/TLS ALPN; peers with a different major protocol never connect.
+pub const PROTOCOL_VERSION: u16 = 2;
+/// QUIC/TLS ALPN. Kept at 1 across protocol versions so an older peer still
+/// connects far enough to be told "update Glidedesk" (`Hello.protocol` decides).
 pub const ALPN: &[u8] = b"glidedesk/1";
 /// Default UDP port.
 pub const DEFAULT_PORT: u16 = 24_850;
@@ -275,6 +276,8 @@ pub struct Welcome {
     pub name: String,
     pub platform: Platform,
     pub settings: ClientSettings,
+    /// The server's password proof (PLAN §14.1); `None` when it has no password.
+    pub auth_proof: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -284,6 +287,10 @@ pub enum RejectReason {
     Blocked,
     ServerStopping,
     RoleMismatch,
+    /// Appended in protocol 2 (order matters on the wire).
+    WrongPassword,
+    PasswordRequired,
+    TooManyAttempts,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -348,6 +355,18 @@ pub enum Control {
     /// sender may now move the originals to the Trash (cut & paste).
     FilesTaken(FileSetId),
     Goodbye(GoodbyeReason),
+    // --- protocol 2 (appended: variant order is the wire format) ---
+    /// Server → client after `Hello` when a password is set: Argon2 salt and
+    /// the server's SPAKE2 message.
+    AuthChallenge {
+        salt: Vec<u8>,
+        message: Vec<u8>,
+    },
+    /// Client → server: its SPAKE2 message and proof (HMAC over the TLS exporter).
+    AuthResponse {
+        message: Vec<u8>,
+        proof: Vec<u8>,
+    },
 }
 
 // ---------------------------------------------------------------------------

@@ -22,8 +22,24 @@ pub struct ServerAd {
     pub port: u16,
     pub protocol: u16,
     pub app_version: String,
+    /// The server's computer (host) name, so users can type it to connect.
+    pub host: String,
     /// mDNS instance name (used to match removals).
     pub fullname: String,
+}
+
+impl ServerAd {
+    /// Does a name typed by the user refer to this server? Compares the
+    /// display name and the computer name, ignoring case and a `.local` suffix.
+    #[must_use]
+    pub fn matches_name(&self, typed: &str) -> bool {
+        let norm = |s: &str| {
+            let s = s.trim().trim_end_matches('.').to_lowercase();
+            s.strip_suffix(".local").map_or_else(|| s.clone(), str::to_owned)
+        };
+        let want = norm(typed);
+        !want.is_empty() && (norm(&self.name) == want || norm(&self.host) == want)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,6 +68,7 @@ impl Advertiser {
     pub fn start(
         id: DeviceId,
         name: &str,
+        host_name: &str,
         app_version: &str,
         port: u16,
         interfaces: Option<(&[String], &[IpAddr])>,
@@ -68,8 +85,13 @@ impl Advertiser {
         let id_s = id.to_string();
         let instance = format!("{} ({})", clean(name), &id_s[..8]);
         let host = format!("glidedesk-{}.local.", &id_s[..12]);
-        let props =
-            [("id", id_s.as_str()), ("name", &clean(name)), ("v", app_version), ("p", &PROTOCOL_VERSION.to_string())];
+        let props = [
+            ("id", id_s.as_str()),
+            ("name", &clean(name)),
+            ("host", &clean(host_name)),
+            ("v", app_version),
+            ("p", &PROTOCOL_VERSION.to_string()),
+        ];
         let info = ServiceInfo::new(MDNS_SERVICE, &instance, &host, "", port, &props[..])
             .map_err(mdns_err)?
             .enable_addr_auto();
@@ -163,6 +185,31 @@ fn parse(s: &mdns_sd::ResolvedService) -> Option<ServerAd> {
         port: s.port,
         protocol,
         app_version: clean(props.get_property_val_str("v").unwrap_or("")),
+        host: clean(props.get_property_val_str("host").unwrap_or("")),
         fullname: s.fullname.clone(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn typed_names_match_display_or_computer_name() {
+        let ad = ServerAd {
+            id: DeviceId([1; 16]),
+            name: "Studio Mac".into(),
+            addrs: vec![],
+            port: 1,
+            protocol: PROTOCOL_VERSION,
+            app_version: String::new(),
+            host: "Soykots-MacBook-Pro".into(),
+            fullname: String::new(),
+        };
+        assert!(ad.matches_name("studio mac"));
+        assert!(ad.matches_name("soykots-macbook-pro.local"));
+        assert!(ad.matches_name("SOYKOTS-MACBOOK-PRO"));
+        assert!(!ad.matches_name("office-pc"));
+        assert!(!ad.matches_name("  "));
+    }
 }

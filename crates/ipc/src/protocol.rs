@@ -61,6 +61,11 @@ pub enum Request {
         id: DeviceId,
     },
     SelfTest,
+    /// Sets (non-empty) or removes (empty) the server password. The agent keeps
+    /// only a salted Argon2id key; the password itself is never stored.
+    SetServerPassword {
+        password: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

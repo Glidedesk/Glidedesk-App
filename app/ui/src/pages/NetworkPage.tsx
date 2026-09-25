@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, errorText } from "../lib/api";
 import type { AgentStatus, Config, NetInterface } from "../lib/types";
-import { Badge, Button, Callout, NumberInput, Page, Row, Section, Switch } from "../components/ui";
+import { useToast } from "../lib/toast";
+import { Badge, Button, Callout, NumberInput, Page, Row, Section, Switch, TextInput } from "../components/ui";
 
 type Update = (m: (c: Config) => void, now?: boolean) => void;
 const KIND = { ethernet: "Ethernet", wifi: "Wi-Fi", vpn: "VPN", loopback: "Loopback", virtual: "Virtual", other: "Other" } as const;
@@ -25,6 +26,45 @@ function ListEditor({ label, values, onChange }: { label: string; values: string
       />
       {bad.length > 0 && <div className="text-[12px] text-bad">Not an address or range: {bad.join(", ")}</div>}
     </div>
+  );
+}
+
+function PasswordSection({ enabled }: { enabled: boolean }) {
+  const { run } = useToast();
+  const [pw, setPw] = useState("");
+  const [again, setAgain] = useState("");
+  const mismatch = again !== "" && pw !== again;
+  const save = () =>
+    void run(async () => {
+      await api.setServerPassword(pw);
+      setPw("");
+      setAgain("");
+    }, "Password set — computers need it to connect");
+  return (
+    <Section
+      title="Password"
+      description="With a password, a computer can only connect if it knows it. The password never crosses the network, and only a salted hash is kept here."
+    >
+      <Row label="Status">
+        {enabled ? <Badge tone="ok">On</Badge> : <Badge tone="warn">Off — any computer on the network can connect</Badge>}
+      </Row>
+      <Row label={enabled ? "Change password" : "Set a password"} hint="At least 8 characters. Enter the same password on each client (This computer → Server).">
+        <div className="flex flex-col items-end gap-2">
+          <TextInput type="password" label="New password" value={pw} placeholder="New password" onChange={setPw} />
+          <TextInput type="password" label="Repeat password" value={again} placeholder="Repeat" invalid={mismatch} onChange={setAgain} />
+          <div className="flex gap-2">
+            {enabled && (
+              <Button variant="danger" onClick={() => void run(() => api.setServerPassword(""), "Password removed")}>
+                Remove
+              </Button>
+            )}
+            <Button variant="primary" disabled={pw.length < 8 || pw !== again} onClick={save}>
+              {enabled ? "Change" : "Set password"}
+            </Button>
+          </div>
+        </div>
+      </Row>
+    </Section>
   );
 }
 
@@ -140,7 +180,8 @@ export function NetworkPage({ status, config, update }: { status: AgentStatus; c
           <Switch label="Discovery" checked={net.discovery} onChange={(v) => update((c) => void (c.server.network.discovery = v), true)} />
         </Row>
       </Section>
-      <Section title="Who may connect" description="There is no password by design; these filters limit which addresses can connect.">
+      <PasswordSection enabled={net.password != null} />
+      <Section title="Who may connect" description="Limit which addresses may connect at all (checked before the password).">
         <Row label="Same subnet only" hint="Only computers on the same local network segment.">
           <Switch label="Same subnet only" checked={net.same_subnet_only} onChange={(v) => update((c) => void (c.server.network.same_subnet_only = v), true)} />
         </Row>

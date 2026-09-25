@@ -34,6 +34,13 @@ pub fn export(cfg: &Config, scope: ExportScope, app_version: &str) -> Result<Str
     if let Some(Value::Table(dev)) = table.get_mut("device") {
         dev.remove("id");
     }
+    // Passwords never leave this computer in an export (§14.1).
+    if let Some(Value::Table(net)) = table.get_mut("server").and_then(|s| s.get_mut("network")) {
+        net.remove("password");
+    }
+    if let Some(Value::Table(client)) = table.get_mut("client") {
+        client.remove("password");
+    }
     if scope == ExportScope::LayoutOnly {
         let server_clients =
             table.get("server").and_then(|s| s.get("clients")).cloned().unwrap_or(Value::Array(Vec::new()));
@@ -108,6 +115,9 @@ pub fn import(text: &str, current: &Config, opts: ImportOptions) -> Result<Impor
         if c.device.name.is_empty() {
             c.device.name.clone_from(&current.device.name);
         }
+        // Imports never set or clear a password.
+        c.server.network.password.clone_from(&current.server.network.password);
+        c.client.password.clone_from(&current.client.password);
         if opts.keep_network {
             let net = &current.server.network;
             c.server.network.mode = net.mode;
@@ -153,6 +163,18 @@ mod tests {
         c.server.clients.push(ClientEntry { id: DeviceId([2; 16]), name: "pc".into(), ..Default::default() });
         c.layout.links.push(LinkSpec::simple(DeviceId([9; 16]), Side::Right, DeviceId([2; 16])));
         c
+    }
+
+    #[test]
+    fn export_omits_passwords_and_import_keeps_local_ones() {
+        let mut c = Config::default();
+        c.server.network.password = Some(crate::StoredPassword { salt: "aa".repeat(16), key: "bb".repeat(32) });
+        c.client.password = "hunter2".into();
+        let text = export(&c, ExportScope::Full, "1").unwrap();
+        assert!(!text.contains("hunter2") && !text.contains(&"bb".repeat(32)), "{text}");
+        let preview = import(&text, &c, ImportOptions::default()).unwrap();
+        assert_eq!(preview.config.client.password, "hunter2");
+        assert!(preview.config.server.network.password.is_some());
     }
 
     #[test]

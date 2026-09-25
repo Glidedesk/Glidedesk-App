@@ -198,9 +198,27 @@ export function Select<T extends string>({ value, onChange, options, label }: { 
   );
 }
 
-export function TextInput({ value, onChange, placeholder, label, width = "w-64", invalid }: { value: string; onChange: (v: string) => void; placeholder?: string; label: string; width?: string; invalid?: boolean }) {
+export function TextInput({
+  value,
+  onChange,
+  placeholder,
+  label,
+  width = "w-64",
+  invalid,
+  type = "text",
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  label: string;
+  width?: string;
+  invalid?: boolean;
+  type?: "text" | "password";
+}) {
   return (
     <input
+      type={type}
+      autoComplete={type === "password" ? "off" : undefined}
       aria-label={label}
       aria-invalid={invalid || undefined}
       className={`${width} rounded-lg border bg-panel px-2 py-1 ${invalid ? "border-bad" : "border-line"}`}
