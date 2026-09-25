@@ -792,24 +792,17 @@ impl Injector for MacInjector {
 }
 
 /// Frontmost app is full screen if one of its normal-layer windows covers a whole display.
+///
+/// The front app is taken from the window list (ordered front to back), not
+/// `NSWorkspace`: in a background process without a run loop the workspace's
+/// "frontmost application" is never refreshed and could block switching forever.
 pub fn fullscreen_app() -> Option<String> {
-    use objc2_app_kit::NSWorkspace;
-    use objc2_core_foundation::{CFDictionary, CFNumber, CFType};
+    use objc2_core_foundation::{CFDictionary, CFNumber, CFString, CFType};
     use objc2_core_graphics::{
         CGRectMakeWithDictionaryRepresentation, CGWindowListCopyWindowInfo, CGWindowListOption, kCGWindowBounds,
-        kCGWindowLayer, kCGWindowOwnerPID,
+        kCGWindowLayer, kCGWindowOwnerName, kCGWindowOwnerPID,
     };
 
-    let app = NSWorkspace::sharedWorkspace().frontmostApplication()?;
-    if app.processIdentifier() == std::process::id().cast_signed() {
-        return None;
-    }
-    let pid = i64::from(app.processIdentifier());
-    let name = app
-        .executableURL()
-        .and_then(|u| u.lastPathComponent())
-        .map(|n| n.to_string().to_lowercase())
-        .unwrap_or_default();
     let displays: Vec<Rect> = display_ids().into_iter().map(|id| to_rect(CGDisplayBounds(id))).collect();
     let list = CGWindowListCopyWindowInfo(
         CGWindowListOption::OptionOnScreenOnly | CGWindowListOption::ExcludeDesktopElements,
@@ -817,37 +810,45 @@ pub fn fullscreen_app() -> Option<String> {
     )?;
     // SAFETY: CGWindowList returns a CFArray of CFDictionary; the constant keys are CFStrings.
     unsafe {
-        let num = |d: &CFDictionary, key: &objc2_core_foundation::CFString| -> Option<i64> {
+        let value = |d: &CFDictionary, key: &CFString| -> Option<&CFType> {
             let v = d.value((&raw const *key).cast());
-            if v.is_null() {
-                return None;
-            }
-            (*v.cast::<CFType>()).downcast_ref::<CFNumber>()?.as_i64()
+            (!v.is_null()).then(|| &*v.cast::<CFType>())
         };
-        for i in 0..list.count() {
-            let d = list.value_at_index(i).cast::<CFDictionary>();
-            if d.is_null() {
-                continue;
-            }
-            let d = &*d;
-            if num(d, kCGWindowOwnerPID) != Some(pid) || num(d, kCGWindowLayer) != Some(0) {
-                continue;
-            }
+        let num = |d: &CFDictionary, key: &CFString| value(d, key)?.downcast_ref::<CFNumber>()?.as_i64();
+        let bounds = |d: &CFDictionary| {
             let b = d.value((&raw const *kCGWindowBounds).cast());
             if b.is_null() {
-                continue;
+                return None;
             }
             let mut r = objc2_core_foundation::CGRect::default();
-            if CGRectMakeWithDictionaryRepresentation(Some(&*b.cast::<CFDictionary>()), &raw mut r) {
-                let w = to_rect(r);
-                if displays
-                    .iter()
-                    .any(|d| w.x <= d.x && w.y <= d.y && w.right() >= d.right() && w.bottom() >= d.bottom())
-                {
-                    return Some(name);
-                }
-            }
+            CGRectMakeWithDictionaryRepresentation(Some(&*b.cast::<CFDictionary>()), &raw mut r).then(|| to_rect(r))
+        };
+        let dicts: Vec<&CFDictionary> = (0..list.count())
+            .filter_map(|i| {
+                let d = list.value_at_index(i).cast::<CFDictionary>();
+                (!d.is_null()).then(|| &*d)
+            })
+            .collect();
+        // Front-most normal window = front-most app.
+        let front = dicts.iter().find(|d| num(d, kCGWindowLayer) == Some(0))?;
+        let pid = num(front, kCGWindowOwnerPID)?;
+        let name = value(front, kCGWindowOwnerName)
+            .and_then(|v| v.downcast_ref::<CFString>())
+            .map(|n| n.to_string().to_lowercase())
+            .unwrap_or_default();
+        if name == "glidedesk" {
+            return None;
         }
+        let covers = dicts
+            .iter()
+            .filter(|d| num(d, kCGWindowOwnerPID) == Some(pid) && num(d, kCGWindowLayer) == Some(0))
+            .any(|d| {
+                bounds(d).is_some_and(|w| {
+                    displays
+                        .iter()
+                        .any(|d| w.x <= d.x && w.y <= d.y && w.right() >= d.right() && w.bottom() >= d.bottom())
+                })
+            });
+        covers.then_some(name)
     }
-    None
 }

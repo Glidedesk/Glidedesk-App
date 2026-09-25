@@ -117,7 +117,10 @@ impl Agent {
                 };
                 match server::start(self.config.clone(), deps) {
                     Ok(h) => self.runtime = Runtime::Server(h),
-                    Err(e) => self.fail(format!("cannot start the server: {e}")),
+                    Err(e) => {
+                        self.fail(format!("cannot start the server: {e}"));
+                        return;
+                    }
                 }
             }
             Role::Client => {

@@ -273,3 +273,13 @@ fn crossing_a_wide_client_and_back_returns_home_first_time() {
     assert_eq!(pos.x, 999);
     assert_eq!(e.focus(), Focus::Local);
 }
+
+/// The log/UI explanation when pushing an edge doesn't switch.
+#[test]
+fn explains_why_an_edge_push_does_not_switch() {
+    let e = engine(LinkSpec::simple(SERVER, Side::Right, CLIENT));
+    let why = e.explain_edge(SERVER, Point::new(500, 0), 0, -5, &ctx()).unwrap();
+    assert!(why.contains("top edge") && why.contains("right"), "{why}");
+    assert!(e.explain_edge(SERVER, Point::new(500, 200), 0, -5, &ctx()).is_none(), "not at an edge");
+    assert_eq!(e.explain_edge(SERVER, Point::new(999, 200), 5, 0, &ctx()).as_deref(), Some("not blocked"));
+}

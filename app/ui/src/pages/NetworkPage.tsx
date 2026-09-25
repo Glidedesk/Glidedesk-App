@@ -93,6 +93,11 @@ export function NetworkPage({ status, config, update }: { status: AgentStatus; c
   if (isClient) {
     return (
       <Page title="Network" subtitle="How this computer reaches the server.">
+        <Section title="IP version">
+          <Row label="Use IPv6" hint="Off: connect over IPv4 only (an IPv6 server address typed by hand still works).">
+            <Switch label="Use IPv6" checked={config.client.ipv6} onChange={(v) => update((c) => void (c.client.ipv6 = v), true)} />
+          </Row>
+        </Section>
         <Section title="Interface" description="Leave on Any unless the server must be reached through one specific network.">
           <Row label="Use interface">
             <select
@@ -190,6 +195,9 @@ export function NetworkPage({ status, config, update }: { status: AgentStatus; c
         </Row>
         <Row label="Announce on the network" hint="Lets clients find this server automatically (mDNS), only on the interfaces above.">
           <Switch label="Discovery" checked={net.discovery} onChange={(v) => update((c) => void (c.server.network.discovery = v), true)} />
+        </Row>
+        <Row label="Use IPv6" hint="Off: listen and announce on IPv4 only.">
+          <Switch label="Use IPv6" checked={net.ipv6} onChange={(v) => update((c) => void (c.server.network.ipv6 = v), true)} />
         </Row>
       </Section>
       <PasswordSection enabled={net.password != null} />

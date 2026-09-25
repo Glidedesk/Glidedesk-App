@@ -30,6 +30,7 @@ const INPUT_QUEUE: usize = 1024;
 const CONTROL_QUEUE: usize = 64;
 const MAX_CLIENTS: usize = 64;
 const SECURE_INPUT_WARNING: &str = "typing";
+const EDGE_NOTE: &str = "The cursor stayed here";
 
 /// Commands from the agent / UI / tray.
 #[derive(Debug)]
@@ -86,8 +87,14 @@ pub fn start(config: Config, deps: ServerDeps) -> Result<ServerHandle, CoreError
     let local_monitors = (deps.monitors)().map_err(|e| CoreError::Input(e.to_string()))?;
     let net_cfg = &config.server.network;
     let all_ifaces = glidedesk_net::list_interfaces();
-    let plan =
-        glidedesk_net::resolve_bind(net_cfg.mode, &net_cfg.interfaces, &net_cfg.addresses, net_cfg.port, &all_ifaces);
+    let plan = glidedesk_net::resolve_bind(
+        net_cfg.mode,
+        &net_cfg.interfaces,
+        &net_cfg.addresses,
+        net_cfg.port,
+        &all_ifaces,
+        net_cfg.ipv6,
+    );
     let tuning = Tuning {
         keep_alive: Duration::from_millis(u64::from(config.server.health.interval_ms)),
         idle_timeout: Duration::from_millis(u64::from(config.server.health.idle_timeout_ms)),
@@ -104,7 +111,8 @@ pub fn start(config: Config, deps: ServerDeps) -> Result<ServerHandle, CoreError
             glidedesk_config::BindMode::All => None,
             _ => Some((net_cfg.interfaces.as_slice(), net_cfg.addresses.as_slice())),
         };
-        match Advertiser::start(config.device.id, &name, &deps.host_name, &deps.app_version, port, scope) {
+        match Advertiser::start(config.device.id, &name, &deps.host_name, &deps.app_version, port, scope, net_cfg.ipv6)
+        {
             Ok(a) => Some(a),
             Err(e) => {
                 warn!(error = %e, "mDNS announcement failed; clients must use the address");
@@ -223,6 +231,9 @@ struct Hub {
     fullscreen: Option<(Instant, bool)>,
     /// Clipboard sequence last sent to each client.
     last_sent: HashMap<DeviceId, u64>,
+    /// Diagnostics: first capture event seen, last "why no switch" log line.
+    capture_seen: bool,
+    last_edge_note: Option<(Instant, String)>,
     /// Server password (PLAN §14.1); `None` = open.
     verifier: Option<Arc<glidedesk_net::auth::Verifier>>,
     throttle: Arc<glidedesk_net::auth::Throttle>,
@@ -311,6 +322,8 @@ impl Hub {
             sync: crate::sync::Sync::new(deps.clipboard),
             fullscreen: None,
             last_sent: HashMap::new(),
+            capture_seen: false,
+            last_edge_note: None,
             verifier: config
                 .server
                 .network
@@ -362,6 +375,7 @@ impl Hub {
                 _ = monitor_poll.tick() => {
                     self.poll_monitors();
                     self.check_secure_input();
+                    self.expire_edge_note();
                 }
                 _ = transfer_tick.tick(), if self.sync.transfers.any_active() => self.publish(),
                 Ok(()) = paste_hold.changed() => {
@@ -413,6 +427,38 @@ impl Hub {
         v
     }
 
+    /// Logs (at most every few seconds) why pushing an edge didn't switch, so
+    /// "the mouse doesn't go to the other computer" can be diagnosed from the log.
+    fn note_edge(&mut self, pos: Point, dx: i32, dy: i32, ctx: &EdgeContext) {
+        let Some(why) = self.engine.explain_edge(self.local_id, pos, dx, dy, ctx) else { return };
+        if why == "not blocked" {
+            return;
+        }
+        let now = Instant::now();
+        if self
+            .last_edge_note
+            .as_ref()
+            .is_some_and(|(t, w)| *w == why && now.duration_since(*t) < Duration::from_secs(5))
+        {
+            return;
+        }
+        info!(x = pos.x, y = pos.y, "edge push did not switch: {why}");
+        // Also shown in the window for a few seconds (cleared on the heartbeat).
+        self.warnings.retain(|w| !w.starts_with(EDGE_NOTE));
+        self.warnings.push(format!("{EDGE_NOTE}: {why}"));
+        self.last_edge_note = Some((now, why));
+        self.publish();
+    }
+
+    /// Drops the "why no switch" note once it's a few seconds old.
+    fn expire_edge_note(&mut self) {
+        let old = self.last_edge_note.as_ref().is_none_or(|(t, _)| t.elapsed() > Duration::from_secs(8));
+        if old && self.warnings.iter().any(|w| w.starts_with(EDGE_NOTE)) {
+            self.warnings.retain(|w| !w.starts_with(EDGE_NOTE));
+            self.publish();
+        }
+    }
+
     fn focused(&self) -> Option<DeviceId> {
         match self.engine.focus() {
             Focus::Remote { machine, .. } => Some(machine),
@@ -421,6 +467,10 @@ impl Hub {
     }
 
     fn on_capture(&mut self, ev: CaptureEvent) {
+        if !self.capture_seen {
+            self.capture_seen = true;
+            info!("keyboard/mouse capture is receiving events");
+        }
         match ev {
             CaptureEvent::Motion { pos, dx, dy } => {
                 let ctx = self.ctx();
@@ -430,7 +480,11 @@ impl Hub {
                         self.last_local_pos = pos;
                         // Never switch while a button is held: its release would be lost locally.
                         let (dx, dy) = if self.pressed.any_button() { (0, 0) } else { (dx, dy) };
-                        self.engine.on_local_move(pos, dx, dy, ctx)
+                        let out = self.engine.on_local_move(pos, dx, dy, ctx);
+                        if out == Outcome::None && (dx != 0 || dy != 0) {
+                            self.note_edge(pos, dx, dy, &ctx);
+                        }
+                        out
                     }
                     Focus::Remote { .. } => self.engine.on_remote_move(dx, dy, ctx),
                 };
@@ -949,6 +1003,7 @@ impl Hub {
         self.capture.stop();
         self.advertiser = None;
         self.net.close(b"server stopping");
+        self.net.wait_closed().await;
         for slot in self.slots.values_mut() {
             slot.conn = None;
             slot.health.disconnected();

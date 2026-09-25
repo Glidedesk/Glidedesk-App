@@ -444,8 +444,10 @@ impl Runner {
     async fn connect(&self, addrs: &[SocketAddr]) -> Result<(quinn::Endpoint, quinn::Connection, SocketAddr), String> {
         let tuning = Tuning::default();
         let mut last_err = String::from("no address");
+        // IPv4 only unless IPv6 is on (or only IPv6 addresses exist, e.g. one was typed).
+        let v4_only = !self.config.client.ipv6 && addrs.iter().any(SocketAddr::is_ipv4);
+        let mut ordered: Vec<SocketAddr> = addrs.iter().copied().filter(|a| !v4_only || a.is_ipv4()).collect();
         // Prefer IPv4 then IPv6; link-local last.
-        let mut ordered = addrs.to_vec();
         ordered.sort_by_key(|a| (a.is_ipv6(), matches!(a.ip(), IpAddr::V6(v6) if v6.is_unicast_link_local())));
         for addr in ordered {
             let ep = match glidedesk_net::client_endpoint(bind_ip(&self.config, addr.is_ipv6()), addr.is_ipv6(), tuning)
@@ -791,7 +793,8 @@ impl Runner {
                         ClientCommand::ApplyConfig(c) => {
                             let address_changed = c.client.server_address != self.config.client.server_address
                                 || c.client.interface != self.config.client.interface
-                                || c.client.password != self.config.client.password;
+                                || c.client.password != self.config.client.password
+                                || c.client.ipv6 != self.config.client.ipv6;
                             self.config = *c;
                             if address_changed {
                                 let _ = control.send(&Control::Goodbye(GoodbyeReason::Restarting)).await;

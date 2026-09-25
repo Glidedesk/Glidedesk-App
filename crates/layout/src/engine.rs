@@ -515,6 +515,70 @@ impl Engine {
         SideResult::Switched(self.enter(target, pos))
     }
 
+    /// Why a push against an edge of `machine` at `at` does not switch (for the
+    /// log; changes nothing). `None` = it isn't at an outer edge in that direction.
+    #[must_use]
+    pub fn explain_edge(&self, machine: DeviceId, at: Point, dx: i32, dy: i32, ctx: &EdgeContext) -> Option<String> {
+        let sides = [
+            (dx > 0).then_some(Side::Right),
+            (dx < 0).then_some(Side::Left),
+            (dy > 0).then_some(Side::Bottom),
+            (dy < 0).then_some(Side::Top),
+        ];
+        let mons = self.layout.monitors(&machine)?;
+        for side in sides.into_iter().flatten() {
+            let r = mons.iter().find(|m| m.bounds.contains(at)).map(|m| m.bounds)?;
+            let on_edge = match side {
+                Side::Left => at.x == r.left(),
+                Side::Right => at.x == r.right() - 1,
+                Side::Top => at.y == r.top(),
+                Side::Bottom => at.y == r.bottom() - 1,
+            };
+            if !on_edge {
+                continue;
+            }
+            if self.locked {
+                return Some("the cursor is locked to this screen".into());
+            }
+            let skip = |id: DeviceId| self.unavailable.contains(&id);
+            let Some(exit) = self.layout.exit(machine, side, at, &skip) else {
+                let linked: Vec<String> = self
+                    .layout
+                    .links
+                    .iter()
+                    .filter(|l| l.from == machine)
+                    .map(|l| format!("{:?}{}", l.side, if skip(l.to) { " (offline)" } else { "" }).to_lowercase())
+                    .collect();
+                let side = format!("{side:?}").to_lowercase();
+                return Some(if linked.is_empty() {
+                    format!("no computer is placed next to this screen yet (pushed the {side} edge) — see Layout")
+                } else {
+                    format!(
+                        "no computer on the {side} edge — the other computer is on the {} (Layout)",
+                        linked.join(", ")
+                    )
+                });
+            };
+            let l = &self.layout.links[exit.link];
+            let corner = self.corner_distance(machine, l.from_run.segments[exit.seg].monitor, side, at);
+            let p = &self.policy;
+            return Some(if let Some(m) = p.modifier.filter(|m| !ctx.mods.has(*m)) {
+                format!("hold {m:?} to switch (Keyboard & Mouse → switching)")
+            } else if p.block_fullscreen && ctx.fullscreen {
+                "a full-screen app is in front (Keyboard & Mouse → switching)".into()
+            } else if corner < p.dead_corner_px {
+                "too close to a screen corner".into()
+            } else if p.double_tap_ms > 0 {
+                "double-tap the edge to switch".into()
+            } else if p.delay_ms > 0 {
+                "keep pushing: switch delay".into()
+            } else {
+                "not blocked".into()
+            });
+        }
+        None
+    }
+
     /// `None` = allowed; `Some` = stop here with this result.
     fn decide(
         &mut self,

@@ -80,12 +80,32 @@ impl Server {
 
         let targets: Vec<(SocketAddr, bool)> = match plan {
             BindPlan::Wildcard(port) => vec![(SocketAddr::new(unspecified(true), *port), true)],
+            BindPlan::Wildcard4(port) => vec![(SocketAddr::new(unspecified(false), *port), false)],
             BindPlan::Addrs(a) => a.iter().map(|a| (*a, false)).collect(),
         };
+        if targets.is_empty() {
+            return Err(NetError::Config(
+                "none of the chosen network interfaces/IP addresses is available (Network → Listen on)".into(),
+            ));
+        }
         let mut statuses = Vec::new();
         let mut endpoints = Vec::new();
         for (addr, dual) in targets {
-            let sock = udp_socket(addr, dual).or_else(|e| {
+            // Right after a restart the previous server may still be letting go of
+            // the port: retry "address in use" for a moment instead of failing.
+            let bind = |addr, dual| {
+                let mut tries = 0;
+                loop {
+                    match udp_socket(addr, dual) {
+                        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && tries < 20 => {
+                            tries += 1;
+                            std::thread::sleep(Duration::from_millis(100));
+                        }
+                        other => return other,
+                    }
+                }
+            };
+            let sock = bind(addr, dual).or_else(|e| {
                 // No IPv6 on this host: fall back to IPv4 wildcard.
                 if dual { udp_socket(SocketAddr::new(unspecified(false), addr.port()), false) } else { Err(e) }
             });
@@ -140,6 +160,14 @@ impl Server {
     pub fn close(&self, reason: &[u8]) {
         for ep in &self.endpoints {
             ep.close(VarInt::from_u32(0), reason);
+        }
+    }
+
+    /// Waits (bounded) until closed endpoints have released their sockets, so a
+    /// restarted server can bind the same port straight away.
+    pub async fn wait_closed(&self) {
+        for ep in &self.endpoints {
+            let _ = tokio::time::timeout(Duration::from_secs(2), ep.wait_idle()).await;
         }
     }
 }

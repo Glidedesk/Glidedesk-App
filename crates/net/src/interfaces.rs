@@ -121,6 +121,8 @@ pub fn list_interfaces() -> Vec<NetInterface> {
 pub enum BindPlan {
     /// One dual-stack wildcard socket (`[::]:port`, falls back to `0.0.0.0`).
     Wildcard(u16),
+    /// IPv4 only: `0.0.0.0:port`.
+    Wildcard4(u16),
     Addrs(Vec<SocketAddr>),
 }
 
@@ -133,22 +135,26 @@ pub fn resolve_bind(
     addresses: &[IpAddr],
     port: u16,
     all: &[NetInterface],
+    ipv6: bool,
 ) -> BindPlan {
+    let family_ok = |ip: &IpAddr| ipv6 || ip.is_ipv4();
     let sock = |a: &IfAddr| match a.ip {
         IpAddr::V4(v4) => SocketAddr::new(IpAddr::V4(v4), port),
         IpAddr::V6(v6) => SocketAddr::V6(std::net::SocketAddrV6::new(v6, port, 0, a.scope_id)),
     };
     match mode {
-        BindMode::All => BindPlan::Wildcard(port),
+        BindMode::All if ipv6 => BindPlan::Wildcard(port),
+        BindMode::All => BindPlan::Wildcard4(port),
         BindMode::Interfaces => BindPlan::Addrs(
             all.iter()
                 .filter(|i| interfaces.contains(&i.name) && i.up)
-                .flat_map(|i| i.addrs.iter().map(sock))
+                .flat_map(|i| i.addrs.iter().filter(|a| family_ok(&a.ip)).map(sock))
                 .collect(),
         ),
         BindMode::Addresses => BindPlan::Addrs(
             addresses
                 .iter()
+                .filter(|ip| family_ok(ip))
                 .map(|ip| {
                     all.iter()
                         .flat_map(|i| i.addrs.iter())
@@ -165,6 +171,9 @@ pub fn resolve_bind(
 pub fn bound_ifaddrs(plan: &BindPlan, all: &[NetInterface]) -> Vec<IfAddr> {
     match plan {
         BindPlan::Wildcard(_) => all.iter().filter(|i| i.up).flat_map(|i| i.addrs.iter().cloned()).collect(),
+        BindPlan::Wildcard4(_) => {
+            all.iter().filter(|i| i.up).flat_map(|i| i.addrs.iter().filter(|a| a.ip.is_ipv4()).cloned()).collect()
+        }
         BindPlan::Addrs(socks) => {
             all.iter().flat_map(|i| i.addrs.iter()).filter(|a| socks.iter().any(|s| s.ip() == a.ip)).cloned().collect()
         }
@@ -195,10 +204,18 @@ mod tests {
     #[test]
     fn resolves_modes() {
         let all = vec![iface("en0", &[("192.168.1.10", 24), ("fd00::10", 64)]), iface("en1", &[("10.0.0.2", 8)])];
-        assert_eq!(resolve_bind(BindMode::All, &[], &[], 5, &all), BindPlan::Wildcard(5));
-        let BindPlan::Addrs(a) = resolve_bind(BindMode::Interfaces, &["en0".into()], &[], 5, &all) else { panic!() };
+        assert_eq!(resolve_bind(BindMode::All, &[], &[], 5, &all, true), BindPlan::Wildcard(5));
+        assert_eq!(resolve_bind(BindMode::All, &[], &[], 5, &all, false), BindPlan::Wildcard4(5));
+        let BindPlan::Addrs(v4) = resolve_bind(BindMode::Interfaces, &["en0".into()], &[], 5, &all, false) else {
+            panic!()
+        };
+        assert!(v4.iter().all(std::net::SocketAddr::is_ipv4), "IPv4 only: {v4:?}");
+        let BindPlan::Addrs(a) = resolve_bind(BindMode::Interfaces, &["en0".into()], &[], 5, &all, true) else {
+            panic!()
+        };
         assert_eq!(a.len(), 2);
-        let BindPlan::Addrs(a) = resolve_bind(BindMode::Addresses, &[], &["10.0.0.2".parse().unwrap()], 5, &all) else {
+        let BindPlan::Addrs(a) = resolve_bind(BindMode::Addresses, &[], &["10.0.0.2".parse().unwrap()], 5, &all, false)
+        else {
             panic!()
         };
         assert_eq!(a, vec!["10.0.0.2:5".parse().unwrap()]);

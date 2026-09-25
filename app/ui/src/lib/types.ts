@@ -75,7 +75,7 @@ export interface Config {
   server: {
     network: {
       mode: "all" | "interfaces" | "addresses"; interfaces: string[]; addresses: string[]; port: number;
-      same_subnet_only: boolean; allow_list: string[]; block_list: string[]; discovery: boolean;
+      same_subnet_only: boolean; allow_list: string[]; block_list: string[]; discovery: boolean; ipv6: boolean;
       /** Salted Argon2id key of the server password (never the password itself). */
       password: { salt: string; key: string } | null;
     };
@@ -94,7 +94,7 @@ export interface Config {
     clients: ClientEntry[];
   };
   client: {
-    server_address: string; password: string; interface: string; receive_dir: string | null; accept_clipboard: boolean; accept_files: boolean;
+    server_address: string; password: string; ipv6: boolean; interface: string; receive_dir: string | null; accept_clipboard: boolean; accept_files: boolean;
     mouse_speed: number | null; scroll_speed: number | null; scroll_invert: boolean | null; key_remap: RemapPreset | null;
     draw_cursor: boolean; led_sync: boolean;
   };

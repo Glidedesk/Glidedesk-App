@@ -72,8 +72,12 @@ impl Advertiser {
         app_version: &str,
         port: u16,
         interfaces: Option<(&[String], &[IpAddr])>,
+        ipv6: bool,
     ) -> Result<Self, NetError> {
         let daemon = ServiceDaemon::new().map_err(mdns_err)?;
+        if !ipv6 {
+            daemon.disable_interface(IfKind::IPv6).map_err(mdns_err)?;
+        }
         if let Some((names, addrs)) = interfaces {
             daemon.disable_interface(IfKind::All).map_err(mdns_err)?;
             let mut kinds: Vec<IfKind> = names.iter().cloned().map(IfKind::Name).collect();

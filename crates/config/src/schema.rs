@@ -143,6 +143,8 @@ pub struct Network {
     pub block_list: Vec<String>,
     /// Announce with mDNS on the bound interfaces.
     pub discovery: bool,
+    /// Also listen and announce on IPv6 (off: IPv4 only).
+    pub ipv6: bool,
     /// Clients must know this password (PLAN §14.1). Only a salted Argon2id key
     /// is stored, never the password. `None` = open.
     pub password: Option<StoredPassword>,
@@ -172,6 +174,7 @@ impl Default for Network {
             allow_list: Vec::new(),
             block_list: Vec::new(),
             discovery: true,
+            ipv6: false,
             password: None,
         }
     }
@@ -343,6 +346,8 @@ pub struct Client {
     pub server_address: String,
     /// The server's password, if it has one (kept in this private settings file).
     pub password: String,
+    /// Also connect over IPv6 (off: IPv4 only, unless an IPv6 address is typed).
+    pub ipv6: bool,
     /// Interface used to reach the server; empty = any.
     pub interface: String,
     /// Where received files land; `None` = Downloads.
@@ -365,6 +370,7 @@ impl Default for Client {
         Self {
             server_address: String::new(),
             password: String::new(),
+            ipv6: false,
             interface: String::new(),
             receive_dir: None,
             accept_clipboard: true,
