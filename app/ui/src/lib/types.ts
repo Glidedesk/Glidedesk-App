@@ -29,12 +29,13 @@ export interface MachineView { id: DeviceId | null; name: string; monitors: Moni
 export interface ServerView {
   running: boolean; bind: { addr: string; error: string | null }[]; fingerprint: string; local: MachineView;
   clients: ClientView[]; focus: DeviceId | null; locked: boolean; warnings: string[]; transfers: TransferView[];
+  offer: string | null;
 }
 
 export interface ClientSideView {
   state: LinkState; server_id: DeviceId | null; server_name: string | null; server_address: string | null;
   server_version: string | null; latency_ms: number | null; active: boolean; clipboard: boolean; files: boolean;
-  message: string | null; local: MachineView; transfers: TransferView[];
+  message: string | null; local: MachineView; transfers: TransferView[]; offer: string | null;
 }
 
 export interface AgentStatus {

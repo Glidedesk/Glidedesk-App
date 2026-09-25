@@ -50,6 +50,8 @@ pub enum ServerCommand {
         config: Box<Config>,
         removed: Vec<DeviceId>,
     },
+    /// Fetch offered files now, without a paste to replay.
+    FetchOffer,
     Shutdown(GoodbyeReason),
 }
 
@@ -365,6 +367,7 @@ impl Hub {
                 Ok(()) = paste_hold.changed() => {
                     let on = *paste_hold.borrow_and_update();
                     self.capture.set_paste_hold(on);
+                    self.publish();
                 }
                 () = sleep_until(deadline) => {
                     let out = self.engine.poll(Instant::now());
@@ -979,6 +982,7 @@ impl Hub {
             ServerCommand::Identify => self.identify(),
             ServerCommand::Disconnect(id) => self.drop_client(id, "disconnected by user"),
             ServerCommand::ApplyConfig { config, removed } => self.apply_config(*config, &removed),
+            ServerCommand::FetchOffer => self.paste_offered_files(None),
             ServerCommand::Shutdown(_) => {} // handled in the loop
         }
     }
@@ -1251,6 +1255,7 @@ impl Hub {
             locked: self.engine.locked(),
             warnings: self.warnings.clone(),
             transfers: self.sync.transfers.snapshot(),
+            offer: self.sync.offer_description(),
         }
     }
 

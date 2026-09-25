@@ -34,6 +34,7 @@ struct Built {
     toggle: Option<MenuItem<Wry>>,
     reconnect: Option<MenuItem<Wry>>,
     identify: Option<MenuItem<Wry>>,
+    offer: Option<MenuItem<Wry>>,
     stopped: bool,
     tooltip: String,
 }
@@ -125,6 +126,8 @@ struct Model {
     clipboard: bool,
     files: bool,
     connected: bool,
+    /// Offered files waiting for a paste here.
+    offer: Option<String>,
 }
 
 fn model(s: &AgentStatus, clipboard: bool, files: bool) -> Model {
@@ -177,6 +180,11 @@ fn model(s: &AgentStatus, clipboard: bool, files: bool) -> Model {
         clipboard,
         files,
         connected: !s.version.is_empty(),
+        offer: s
+            .server
+            .as_ref()
+            .and_then(|v| v.offer.clone())
+            .or_else(|| s.client.as_ref().and_then(|c| c.offer.clone())),
     }
 }
 
@@ -184,7 +192,7 @@ fn model(s: &AgentStatus, clipboard: bool, files: bool) -> Model {
 fn structure(m: &Model) -> String {
     let ids: Vec<String> = m.clients.iter().map(|(id, _)| id.to_string()).collect();
     let wake: Vec<String> = m.wakeable.iter().map(|(id, _)| id.to_string()).collect();
-    format!("{:?}|{}|{}|{}", m.role, m.connected, ids.join(","), wake.join(","))
+    format!("{:?}|{}|{}|{}|{}", m.role, m.connected, ids.join(","), wake.join(","), m.offer.is_some())
 }
 
 fn toggle_label(running: bool) -> &'static str {
@@ -207,6 +215,7 @@ fn build(app: &AppHandle, m: &Model) -> tauri::Result<(Menu<Wry>, Built)> {
         toggle: None,
         reconnect: None,
         identify: None,
+        offer: None,
         stopped: false,
         tooltip: String::new(),
     };
@@ -232,6 +241,13 @@ fn build(app: &AppHandle, m: &Model) -> tauri::Result<(Menu<Wry>, Built)> {
         }
         let refs: Vec<&dyn IsMenuItem<Wry>> = subs.iter().map(AsRef::as_ref).collect();
         items.push(Box::new(Submenu::with_id_and_items(app, "computers", "Computers", true, &refs)?));
+        items.push(Box::new(sep()?));
+    }
+    if let Some(offer) = &m.offer {
+        let label = format!("⬇ Get {offer} now");
+        let item = MenuItem::with_id(app, "fetch-offer", &label, true, None::<&str>)?;
+        built.offer = Some(item.clone());
+        items.push(Box::new(item));
         items.push(Box::new(sep()?));
     }
     if m.role != Role::Unset && m.connected {
@@ -283,6 +299,9 @@ fn update_in_place(b: &Built, m: &Model) {
     if let Some(l) = &b.lock {
         let _ = l.set_checked(m.locked);
         let _ = l.set_enabled(m.running);
+    }
+    if let (Some(item), Some(offer)) = (&b.offer, &m.offer) {
+        let _ = item.set_text(format!("⬇ Get {offer} now"));
     }
     if let Some(t) = &b.toggle {
         let _ = t.set_text(toggle_label(m.running));
@@ -347,6 +366,7 @@ fn on_menu(app: &AppHandle, id: &str) {
                 link.request(Request::Quit).await
             }
             "reconnect" => link.request(Request::ReconnectAll).await,
+            "fetch-offer" => link.request(Request::FetchOffer).await,
             "identify" => link.request(Request::Identify).await,
             "lock" => {
                 let locked = link.status().server.is_some_and(|v| v.locked);

@@ -66,6 +66,9 @@ pub enum Request {
     SetServerPassword {
         password: String,
     },
+    /// Fetch offered files now and put them on the clipboard (for pasting with
+    /// the mouse, where the keyboard shortcut can't be held).
+    FetchOffer,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

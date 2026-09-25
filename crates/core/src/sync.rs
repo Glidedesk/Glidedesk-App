@@ -140,6 +140,16 @@ impl Sync {
         self.hold.subscribe()
     }
 
+    /// "report.pdf from Studio-Mac" while an offer waits here.
+    #[must_use]
+    pub fn offer_description(&self) -> Option<String> {
+        if !self.offer_pending() {
+            return None;
+        }
+        let pending = lock(&self.pending);
+        pending.as_ref().map(|p| format!("{} from {}", describe_names(&p.offer.names, p.offer.items), p.peer))
+    }
+
     /// Files were offered to this computer and the clipboard still shows them.
     #[must_use]
     pub fn offer_pending(&self) -> bool {

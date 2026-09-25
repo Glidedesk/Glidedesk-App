@@ -511,6 +511,15 @@ impl Agent {
                 Ok(Value::Null)
             }
             Request::SelfTest => Ok(crate::selftest::run(matches!(self.runtime, Runtime::Server(_)))),
+            Request::FetchOffer => match &self.runtime {
+                Runtime::Server(h) => {
+                    h.commands.send(ServerCommand::FetchOffer).await.map(|()| Value::Null).map_err(|e| e.to_string())
+                }
+                Runtime::Client(h) => {
+                    h.commands.send(ClientCommand::FetchOffer).await.map(|()| Value::Null).map_err(|e| e.to_string())
+                }
+                Runtime::Idle => Err("sharing is stopped".into()),
+            },
             Request::SetServerPassword { password } => {
                 let mut cfg = self.config.clone();
                 cfg.server.network.password = if password.is_empty() {

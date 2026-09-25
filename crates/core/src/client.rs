@@ -27,6 +27,8 @@ const MONITOR_POLL: Duration = Duration::from_secs(2);
 #[derive(Debug)]
 pub enum ClientCommand {
     Reconnect,
+    /// Fetch offered files now, without a paste to replay.
+    FetchOffer,
     ApplyConfig(Box<Config>),
     Shutdown(GoodbyeReason),
 }
@@ -269,7 +271,7 @@ async fn run(
                 backoff = BACKOFF_MIN;
                 continue;
             }
-            SessionEnd::Command(ClientCommand::Reconnect) => {
+            SessionEnd::Command(ClientCommand::Reconnect | ClientCommand::FetchOffer) => {
                 backoff = BACKOFF_MIN;
                 continue;
             }
@@ -329,7 +331,7 @@ async fn run(
             cmd = cmds.recv() => match cmd {
                 Some(ClientCommand::Shutdown(_)) | None => break,
                 Some(ClientCommand::ApplyConfig(c)) => r.config = *c,
-                Some(ClientCommand::Reconnect) => {}
+                Some(ClientCommand::Reconnect | ClientCommand::FetchOffer) => {}
             }
         }
         backoff = (backoff * 2).min(BACKOFF_MAX);
@@ -352,13 +354,16 @@ impl Runner {
             v.active = false;
             v.latency_ms = None;
         });
-        match cmds.recv().await {
-            Some(ClientCommand::ApplyConfig(c)) => {
-                self.config = *c;
-                true
+        loop {
+            match cmds.recv().await {
+                Some(ClientCommand::ApplyConfig(c)) => {
+                    self.config = *c;
+                    return true;
+                }
+                Some(ClientCommand::Reconnect) => return true,
+                Some(ClientCommand::FetchOffer) => {} // not connected: nothing to fetch
+                Some(ClientCommand::Shutdown(_)) | None => return false,
             }
-            Some(ClientCommand::Reconnect) => true,
-            Some(ClientCommand::Shutdown(_)) | None => false,
         }
     }
 
@@ -624,6 +629,7 @@ impl Runner {
             self.receive_stream(kind[0], s, &conn, &settings);
         };
         let mut paste_guard = glidedesk_input::paste::PasteGuard::new(Platform::current());
+        let mut offer_watch = self.sync.hold_watch();
         self.preferred = Some(welcome.device_id);
         self.last_sent = None;
         let server_name: String = welcome.name.chars().filter(|c| !c.is_control()).take(64).collect();
@@ -678,6 +684,11 @@ impl Runner {
                     if let Err(e) = control.send(&Control::FilesTaken(set)).await {
                         return SessionEnd::Lost(e.to_string());
                     }
+                }
+                Ok(()) = offer_watch.changed() => {
+                    let _ = *offer_watch.borrow_and_update();
+                    let offer = self.sync.offer_description();
+                    self.status.send_modify(|v| v.offer = offer);
                 }
                 _ = transfer_tick.tick(), if self.sync.transfers.any_active() => {
                     let t = self.sync.transfers.snapshot();
@@ -774,6 +785,22 @@ impl Runner {
                             control.finish();
                             conn.close(0u32.into(), b"client stopping");
                             return SessionEnd::Command(ClientCommand::Shutdown(reason));
+                        }
+                        ClientCommand::FetchOffer => {
+                            let (sync, taken, notices) = (self.sync.clone(), taken_tx.clone(), self.notices.clone());
+                            tokio::spawn(async move {
+                                match sync.fetch_offer().await {
+                                    Ok(Some(files)) if files.cut => {
+                                        if crate::sync::wait_taken(files.roots).await {
+                                            let _ = taken.send(files.set).await;
+                                        }
+                                    }
+                                    Ok(_) => {}
+                                    Err(e) => {
+                                        let _ = notices.send(Notice::Error { message: format!("Receiving files failed: {e}") }).await;
+                                    }
+                                }
+                            });
                         }
                         ClientCommand::Reconnect => {
                             let _ = control.send(&Control::Goodbye(GoodbyeReason::Restarting)).await;

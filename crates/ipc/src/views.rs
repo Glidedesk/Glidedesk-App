@@ -90,6 +90,8 @@ pub struct ServerView {
     pub locked: bool,
     pub warnings: Vec<String>,
     pub transfers: Vec<TransferView>,
+    /// Files another computer offered, waiting for a paste here (§14.2).
+    pub offer: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,6 +122,8 @@ pub struct ClientSideView {
     pub message: Option<String>,
     pub local: MachineView,
     pub transfers: Vec<TransferView>,
+    /// Files the server offered, waiting for a paste here (§14.2).
+    pub offer: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

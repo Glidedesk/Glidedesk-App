@@ -324,7 +324,10 @@ async fn clipboard_and_files_follow_the_cursor() {
     std::fs::write(&doc, vec![7u8; 4096]).unwrap();
     client_clip.set_external(ClipData { files: vec![doc], ..Default::default() });
     cap_tx.send(CaptureEvent::Motion { pos: Point::new(999, 100), dx: -10, dy: 0 }).await.unwrap();
-    wait_clip(server_clip.clone(), "offer on server", |c| c.text.as_deref().is_some_and(|t| t.starts_with("report.pdf"))).await;
+    wait_clip(server_clip.clone(), "offer on server", |c| {
+        c.text.as_deref().is_some_and(|t| t.starts_with("report.pdf"))
+    })
+    .await;
     tokio::time::timeout(Duration::from_secs(5), async {
         while !cap_ctl.calls.lock().unwrap().contains(&ControlCall::PasteHold(true)) {
             tokio::time::sleep(Duration::from_millis(20)).await;

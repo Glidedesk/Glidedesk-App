@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { onNavigate, onNotice } from "./lib/api";
+import { api, onNavigate, onNotice } from "./lib/api";
 import { useStatus } from "./lib/store";
 import { ConfigProvider, useConfig } from "./lib/config";
 import { ToastProvider, useToast } from "./lib/toast";
@@ -160,6 +160,7 @@ function Main({ page }: { page: string }) {
         : status.running
           ? "Looking for the server…"
           : "Stopped";
+  const offer = status.server?.offer ?? status.client?.offer ?? null;
   const pill = status.error ? "bg-bad" : status.running ? "bg-ok" : "bg-muted/60";
   const props = { status, config, update };
 
@@ -192,6 +193,17 @@ function Main({ page }: { page: string }) {
         {status.error && (
           <div className="flex items-center gap-2 border-b border-bad/30 bg-bad/10 px-8 py-2.5 text-bad" role="alert">
             <Icon.Error size={16} /> {status.error}
+          </div>
+        )}
+        {offer && (
+          <div className="flex items-center gap-3 border-b border-accent/30 bg-accent-soft px-8 py-2.5 text-fg" role="status">
+            <Icon.Clipboard size={16} />
+            <span className="min-w-0 flex-1 truncate">
+              <b>{offer}</b> is ready to paste here — press {status.platform === "macos" ? "⌘V" : "Ctrl+V"} in a folder.
+            </span>
+            <button className="font-medium text-accent hover:underline" onClick={() => void toast.run(() => api.fetchOffer(), "Files are on the clipboard")}>
+              Get them now
+            </button>
           </div>
         )}
         {error && (
