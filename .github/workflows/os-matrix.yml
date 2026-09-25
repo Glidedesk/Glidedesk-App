@@ -40,9 +40,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: Linux x64, os: ubuntu-24.04, exe: glidedesk, mac: false }
-          - { name: Windows x64, os: windows-2025, exe: glidedesk.exe, mac: false }
-          - { name: macOS ARM64, os: macos-15, exe: glidedesk, mac: true }
+          # xtask (packaging) only runs in the Linux builder image: not built on Windows.
+          - { name: Linux x64, os: ubuntu-24.04, exe: glidedesk, mac: false, skip: "" }
+          - { name: Windows x64, os: windows-2025, exe: glidedesk.exe, mac: false, skip: "--exclude xtask" }
+          - { name: macOS ARM64, os: macos-15, exe: glidedesk, mac: true, skip: "" }
     defaults:
       run:
         shell: bash
@@ -103,11 +104,11 @@ jobs:
 
       - name: Clippy (native)
         if: steps.gate.outputs.skip != 'true'
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace ${{ matrix.skip }} --all-targets --locked -- -D warnings
 
       - name: Tests (native)
         if: steps.gate.outputs.skip != 'true'
-        run: cargo nextest run --workspace --locked --no-fail-fast
+        run: cargo nextest run --workspace ${{ matrix.skip }} --locked --no-fail-fast
 
       - name: Build the app
         if: steps.gate.outputs.skip != 'true'

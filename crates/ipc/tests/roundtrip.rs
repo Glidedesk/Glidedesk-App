@@ -15,9 +15,10 @@ async fn request_response_and_events() {
     assert_eq!(Listener::bind(&ep).await.unwrap_err().kind(), std::io::ErrorKind::AddrInUse);
 
     let server = tokio::spawn(async move {
-        // The liveness probe from the second bind shows up as an empty connection first.
+        // The liveness probe from the second bind shows up as an empty connection first
+        // (on macOS its accept can fail instead: the peer is gone before its uid is read).
         let (mut r, mut w, mut buf) = loop {
-            let s = listener.accept().await.unwrap();
+            let Ok(s) = listener.accept().await else { continue };
             let (r, w) = tokio::io::split(s);
             let mut r = BufReader::new(r);
             let mut buf = Vec::new();

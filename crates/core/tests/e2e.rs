@@ -315,9 +315,10 @@ async fn clipboard_and_files_follow_the_cursor() {
     cap_tx.send(CaptureEvent::Motion { pos: Point::new(999, 100), dx: 5, dy: 0 }).await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    //    The user pastes on the client (Ctrl+V on this test's OS): the V press is
+    //    The user pastes on the client (Ctrl+V, ⌘V on macOS): the V press is
     //    held, the files arrive, then the paste is replayed.
-    let (ctrl, v) = (KeyCode(0xE0), KeyCode(0x19));
+    let ctrl = if cfg!(target_os = "macos") { KeyCode(0xE3) } else { KeyCode(0xE0) };
+    let v = KeyCode(0x19);
     for (k, down) in [(ctrl, true), (v, true), (v, false)] {
         cap_tx.send(CaptureEvent::Key { key: k, down }).await.unwrap();
     }
