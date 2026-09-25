@@ -873,3 +873,51 @@ pub fn fullscreen_app() -> Option<String> {
         covers.then_some(name)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A real event tap takes over this Mac's keyboard and cursor while grabbed:
+    /// only where asked for (the macOS CI runner sets GLIDEDESK_TAP_TESTS).
+    fn enabled() -> bool {
+        std::env::var_os("GLIDEDESK_TAP_TESTS").is_some()
+    }
+
+    /// Posts a key the way mouse utilities (Logi Options+, SteerMouse, …) do for
+    /// buttons set to a shortcut: at the session level, past the HID tap.
+    fn post_key(code: u16, down: bool, flags: CGEventFlags) {
+        let ev = CGEvent::new_keyboard_event(None, code, down).expect("keyboard event");
+        CGEvent::set_flags(Some(&ev), flags);
+        CGEvent::post(CGEventTapLocation::SessionEventTap, Some(&ev));
+    }
+
+    fn saw_key(rx: &mut mpsc::Receiver<CaptureEvent>, want: KeyCode) -> bool {
+        let until = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < until {
+            match rx.try_recv() {
+                Ok(CaptureEvent::Key { key, down: true }) if key == want => return true,
+                Ok(_) => {}
+                Err(_) => std::thread::sleep(Duration::from_millis(10)),
+            }
+        }
+        false
+    }
+
+    #[test]
+    fn shortcuts_posted_by_mouse_software_go_to_the_client_while_grabbed() {
+        if !enabled() {
+            return;
+        }
+        let mut cap = start_capture().expect("event tap (Accessibility)");
+        cap.control.set_grab(true);
+        std::thread::sleep(Duration::from_millis(200));
+        // ⌘C from a mouse button set to "Copy".
+        post_key(0x08, true, CGEventFlags::MaskCommand);
+        post_key(0x08, false, CGEventFlags::MaskCommand);
+        let got = saw_key(&mut cap.events, KeyCode(0x06));
+        cap.control.set_grab(false);
+        cap.control.stop();
+        assert!(got, "a shortcut posted by mouse software was not sent to the client (it acts on this Mac)");
+    }
+}

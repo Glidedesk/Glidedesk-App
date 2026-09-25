@@ -153,6 +153,9 @@ jobs:
         run: cargo clippy --workspace ${{ matrix.skip }} --all-targets --locked -- -D warnings
 
       - name: Tests (native)
+        # macOS: also the real event-tap tests (they take over the runner's input).
+        env:
+          GLIDEDESK_TAP_TESTS: ${{ runner.os == 'macOS' && '1' || '' }}
         run: cargo nextest run --workspace ${{ matrix.skip }} --locked --no-fail-fast
 
       - name: Build the app
