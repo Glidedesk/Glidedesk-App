@@ -101,6 +101,9 @@ pub enum Message {
 pub enum Event {
     Status(Box<AgentStatus>),
     Notice(NoticeView),
+    /// Settings changed outside the settings window (a new client joined,
+    /// reset, reload): the window reloads them before its next save.
+    ConfigChanged,
     /// The agent is exiting (Quit, upgrade, OS shutdown). The tray app exits too
     /// unless it asked for a restart itself.
     Exiting,

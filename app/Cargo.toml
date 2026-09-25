@@ -17,6 +17,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 glidedesk-agent = { path = "../crates/agent" }
 glidedesk-config.workspace = true
+glidedesk-input.workspace = true
 glidedesk-ipc.workspace = true
 glidedesk-proto.workspace = true
 serde.workspace = true

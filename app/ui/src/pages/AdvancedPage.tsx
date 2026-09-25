@@ -30,7 +30,7 @@ function SelfTestView({ r }: { r: Report }) {
   const lat = r.loopback_quic_ms as { p50?: number; p95?: number } | null;
   return (
     <div className="divide-y divide-line">
-      <Check ok={!!perms.accessibility} label="Control this computer" detail={perms.accessibility ? "Allowed" : "Permission needed"} />
+      <Check ok={!!perms.accessibility} label="Permission to use the keyboard and mouse" detail={perms.accessibility ? "Allowed" : "Allow Glidedesk under Accessibility"} />
       <Check ok={!!capture.ok} label="Read this computer's keyboard and mouse" detail={capture.error ?? capture.note} />
       <Check ok={!!inject.ok} label="Type and move the pointer here" detail={inject.error} />
       <Check ok={!!mons?.Ok} label="Screens" detail={mons?.Ok ? `${mons.Ok.length} found` : mons?.Err} />
@@ -127,11 +127,20 @@ export function AdvancedPage({ status, config, update, reload }: { status: Agent
       </Section>
       {status.platform === "macos" && (
         <Section title="macOS permissions">
-          <Row label="Accessibility" hint="Needed to control this Mac">
-            {status.permissions.accessibility ? <Badge tone="ok">Allowed</Badge> : <Button onClick={() => void run(() => api.openExternal("accessibility"))}>Open settings</Button>}
+          <Row label="Accessibility" hint="Required: lets Glidedesk read and control this Mac's keyboard and mouse.">
+            {status.permissions.accessibility ? (
+              <Badge tone="ok">Allowed</Badge>
+            ) : (
+              <>
+                <Button variant="primary" onClick={() => void run(() => api.requestPermissions())}>
+                  Allow…
+                </Button>
+                <Button onClick={() => void run(() => api.openExternal("accessibility"))}>Open settings</Button>
+              </>
+            )}
           </Row>
-          <Row label="Input Monitoring" hint="Needed to share this Mac's keyboard and mouse">
-            {status.permissions.input_monitoring ? <Badge tone="ok">Allowed</Badge> : <Button onClick={() => void run(() => api.openExternal("input-monitoring"))}>Open settings</Button>}
+          <Row label="Input Monitoring" hint="Not required. Only turn it on if typing doesn't reach your other computers.">
+            {status.permissions.input_monitoring ? <Badge tone="ok">Allowed</Badge> : <Button variant="ghost" onClick={() => void run(() => api.openExternal("input-monitoring"))}>Open settings</Button>}
           </Row>
         </Section>
       )}

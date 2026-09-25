@@ -15,10 +15,27 @@ use crate::link::Link;
 
 const TRAY_ID: &str = "glidedesk";
 
-/// Last menu "signature": only rebuild the native menu when it would look different.
+/// What the tray shows now. The native menu is rebuilt only when its
+/// *structure* changes; text and check marks are updated in place, so an open
+/// menu is never closed under the user's pointer (it used to close on every
+/// latency update).
 #[derive(Default)]
 pub struct TrayState {
-    signature: Mutex<String>,
+    inner: Mutex<Option<Built>>,
+}
+
+struct Built {
+    structure: String,
+    header: MenuItem<Wry>,
+    clients: Vec<MenuItem<Wry>>,
+    clipboard: Option<CheckMenuItem<Wry>>,
+    files: Option<CheckMenuItem<Wry>>,
+    lock: Option<CheckMenuItem<Wry>>,
+    toggle: Option<MenuItem<Wry>>,
+    reconnect: Option<MenuItem<Wry>>,
+    identify: Option<MenuItem<Wry>>,
+    stopped: bool,
+    tooltip: String,
 }
 
 fn icon(stopped: bool) -> Option<Image<'static>> {
@@ -163,16 +180,43 @@ fn model(s: &AgentStatus, clipboard: bool, files: bool) -> Model {
     }
 }
 
-fn build(app: &AppHandle, m: &Model) -> tauri::Result<Menu<Wry>> {
+/// Everything that decides which items exist (not their text).
+fn structure(m: &Model) -> String {
+    let ids: Vec<String> = m.clients.iter().map(|(id, _)| id.to_string()).collect();
+    let wake: Vec<String> = m.wakeable.iter().map(|(id, _)| id.to_string()).collect();
+    format!("{:?}|{}|{}|{}", m.role, m.connected, ids.join(","), wake.join(","))
+}
+
+fn toggle_label(running: bool) -> &'static str {
+    if running { "■ Stop sharing" } else { "▶ Start sharing" }
+}
+
+fn build(app: &AppHandle, m: &Model) -> tauri::Result<(Menu<Wry>, Built)> {
     let sep = || PredefinedMenuItem::separator(app);
     let mut items: Vec<Box<dyn IsMenuItem<Wry>>> = Vec::new();
-    items.push(Box::new(MenuItem::with_id(app, "header", &m.header, false, None::<&str>)?));
+    let header = MenuItem::with_id(app, "header", &m.header, false, None::<&str>)?;
+    items.push(Box::new(header.clone()));
     items.push(Box::new(sep()?));
+    let mut built = Built {
+        structure: structure(m),
+        header,
+        clients: Vec::new(),
+        clipboard: None,
+        files: None,
+        lock: None,
+        toggle: None,
+        reconnect: None,
+        identify: None,
+        stopped: false,
+        tooltip: String::new(),
+    };
 
     if m.role == Role::Server && !m.clients.is_empty() {
         let mut subs: Vec<Box<dyn IsMenuItem<Wry>>> = Vec::new();
         for (id, label) in &m.clients {
-            subs.push(Box::new(MenuItem::with_id(app, format!("switch:{id}"), label, true, None::<&str>)?));
+            let item = MenuItem::with_id(app, format!("switch:{id}"), label, true, None::<&str>)?;
+            built.clients.push(item.clone());
+            subs.push(Box::new(item));
         }
         if !m.wakeable.is_empty() {
             subs.push(Box::new(sep()?));
@@ -191,36 +235,29 @@ fn build(app: &AppHandle, m: &Model) -> tauri::Result<Menu<Wry>> {
         items.push(Box::new(sep()?));
     }
     if m.role != Role::Unset && m.connected {
-        items.push(Box::new(CheckMenuItem::with_id(
-            app,
-            "clipboard",
-            "Share clipboard",
-            true,
-            m.clipboard,
-            None::<&str>,
-        )?));
-        items.push(Box::new(CheckMenuItem::with_id(app, "files", "Share files", true, m.files, None::<&str>)?));
+        let clipboard = CheckMenuItem::with_id(app, "clipboard", "Share clipboard", true, m.clipboard, None::<&str>)?;
+        let files = CheckMenuItem::with_id(app, "files", "Share files", true, m.files, None::<&str>)?;
+        items.push(Box::new(clipboard.clone()));
+        items.push(Box::new(files.clone()));
+        built.clipboard = Some(clipboard);
+        built.files = Some(files);
         if m.role == Role::Server {
-            items.push(Box::new(CheckMenuItem::with_id(
-                app,
-                "lock",
-                "Lock cursor to this screen",
-                m.running,
-                m.locked,
-                None::<&str>,
-            )?));
+            let lock =
+                CheckMenuItem::with_id(app, "lock", "Lock cursor to this screen", m.running, m.locked, None::<&str>)?;
+            items.push(Box::new(lock.clone()));
+            built.lock = Some(lock);
         }
         items.push(Box::new(sep()?));
-        items.push(Box::new(MenuItem::with_id(
-            app,
-            "toggle",
-            if m.running { "■ Stop sharing" } else { "▶ Start sharing" },
-            true,
-            None::<&str>,
-        )?));
+        let toggle = MenuItem::with_id(app, "toggle", toggle_label(m.running), true, None::<&str>)?;
+        let reconnect = MenuItem::with_id(app, "reconnect", "⟳ Reconnect all", m.running, None::<&str>)?;
+        let identify = MenuItem::with_id(app, "identify", "Identify screens", m.running, None::<&str>)?;
+        items.push(Box::new(toggle.clone()));
         items.push(Box::new(MenuItem::with_id(app, "restart", "↻ Restart Glidedesk", true, None::<&str>)?));
-        items.push(Box::new(MenuItem::with_id(app, "reconnect", "⟳ Reconnect all", m.running, None::<&str>)?));
-        items.push(Box::new(MenuItem::with_id(app, "identify", "Identify screens", m.running, None::<&str>)?));
+        items.push(Box::new(reconnect.clone()));
+        items.push(Box::new(identify.clone()));
+        built.toggle = Some(toggle);
+        built.reconnect = Some(reconnect);
+        built.identify = Some(identify);
         items.push(Box::new(sep()?));
     }
     items.push(Box::new(MenuItem::with_id(app, "open", "Open Glidedesk…", true, None::<&str>)?));
@@ -228,36 +265,66 @@ fn build(app: &AppHandle, m: &Model) -> tauri::Result<Menu<Wry>> {
     items.push(Box::new(sep()?));
     items.push(Box::new(MenuItem::with_id(app, "quit", "Quit Glidedesk", true, None::<&str>)?));
     let refs: Vec<&dyn IsMenuItem<Wry>> = items.iter().map(AsRef::as_ref).collect();
-    Menu::with_items(app, &refs)
+    Ok((Menu::with_items(app, &refs)?, built))
 }
 
-/// Rebuilds the tray from a new status (cheap no-op when nothing visible changed).
+/// Updates text / checks / enabled state of an existing menu without replacing it.
+fn update_in_place(b: &Built, m: &Model) {
+    let _ = b.header.set_text(&m.header);
+    for (item, (_, label)) in b.clients.iter().zip(&m.clients) {
+        let _ = item.set_text(label);
+    }
+    if let Some(c) = &b.clipboard {
+        let _ = c.set_checked(m.clipboard);
+    }
+    if let Some(f) = &b.files {
+        let _ = f.set_checked(m.files);
+    }
+    if let Some(l) = &b.lock {
+        let _ = l.set_checked(m.locked);
+        let _ = l.set_enabled(m.running);
+    }
+    if let Some(t) = &b.toggle {
+        let _ = t.set_text(toggle_label(m.running));
+    }
+    for i in [&b.reconnect, &b.identify].into_iter().flatten() {
+        let _ = i.set_enabled(m.running);
+    }
+}
+
+/// Applies a new status to the tray (cheap; never closes an open menu unless
+/// the set of items itself changes).
 pub fn refresh(app: &AppHandle, s: &AgentStatus) {
     let (clipboard, files) = crate::sharing_flags(app);
     let m = model(s, clipboard, files);
-    let signature = format!(
-        "{}|{}|{:?}|{:?}|{}|{}|{}|{}|{:?}",
-        m.header, m.running, m.role, m.clients, m.locked, m.clipboard, m.files, m.connected, m.wakeable
-    );
-    let tray_state = app.state::<TrayState>();
-    {
-        let mut last = tray_state.signature.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *last == signature {
-            return;
-        }
-        last.clone_from(&signature);
-    }
     let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
-    if let Ok(menu) = build(app, &m) {
-        let _ = tray.set_menu(Some(menu));
-    }
     let stopped = !s.running || s.error.is_some();
-    if let Some(i) = icon(stopped) {
-        let _ = tray.set_icon(Some(i));
-        #[cfg(target_os = "macos")]
-        let _ = tray.set_icon_as_template(true);
+    let tray_state = app.state::<TrayState>();
+    let mut guard = tray_state.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let same = guard.as_ref().is_some_and(|b| b.structure == structure(&m));
+    if same {
+        if let Some(b) = guard.as_ref() {
+            update_in_place(b, &m);
+        }
+    } else if let Ok((menu, built)) = build(app, &m) {
+        let _ = tray.set_menu(Some(menu));
+        let (old_stopped, old_tip) =
+            guard.as_ref().map_or((None, String::new()), |b| (Some(b.stopped), b.tooltip.clone()));
+        *guard = Some(Built { stopped: old_stopped.unwrap_or(!stopped), tooltip: old_tip, ..built });
     }
-    let _ = tray.set_tooltip(Some(m.header));
+    let Some(b) = guard.as_mut() else { return };
+    if b.stopped != stopped {
+        if let Some(i) = icon(stopped) {
+            let _ = tray.set_icon(Some(i));
+            #[cfg(target_os = "macos")]
+            let _ = tray.set_icon_as_template(true);
+        }
+        b.stopped = stopped;
+    }
+    if b.tooltip != m.header {
+        let _ = tray.set_tooltip(Some(&m.header));
+        b.tooltip.clone_from(&m.header);
+    }
 }
 
 fn on_menu(app: &AppHandle, id: &str) {

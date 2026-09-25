@@ -66,6 +66,14 @@ pub async fn import_settings(app: AppHandle, link: State<'_, Arc<Link>>) -> Resu
     link.request(Request::ImportPreview { text }).await
 }
 
+/// macOS: asks for Accessibility from *this* process — the one macOS knows as
+/// Glidedesk — so the prompt and the Settings list show the app's name and icon.
+/// The background agent is started by this app and shares its permission.
+#[tauri::command]
+pub fn request_permissions() {
+    glidedesk_input::request_permissions();
+}
+
 /// Opens the relevant OS settings page (permissions, firewall) or the log folder.
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)] // Tauri command arguments are owned

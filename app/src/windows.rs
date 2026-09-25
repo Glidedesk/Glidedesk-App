@@ -3,7 +3,28 @@
 
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
+/// macOS: Glidedesk lives in the menu bar. While its window is open it also
+/// shows in the Dock and ⌘-Tab, so the window can't get lost behind System
+/// Settings (it looked as if the app had closed, §14 B2).
+#[cfg(target_os = "macos")]
+fn set_dock(app: &AppHandle, visible: bool) {
+    let policy = if visible { tauri::ActivationPolicy::Regular } else { tauri::ActivationPolicy::Accessory };
+    let _ = app.set_activation_policy(policy);
+}
+
+/// Brings an open settings window back to the front (e.g. after a permission
+/// was granted in System Settings). Does nothing if no window is open.
+pub fn raise_main(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
 pub fn show_main(app: &AppHandle, page: Option<&str>) {
+    #[cfg(target_os = "macos")]
+    set_dock(app, true);
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
         let _ = w.show();
@@ -26,9 +47,21 @@ pub fn show_main(app: &AppHandle, page: Option<&str>) {
     // macOS: content under a transparent title bar (like Finder / System Settings).
     #[cfg(target_os = "macos")]
     let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true);
-    let built = builder.build();
-    if let Err(e) = built {
-        tracing::warn!(error = %e, "could not open the window");
+    match builder.build() {
+        Ok(w) => {
+            #[cfg(target_os = "macos")]
+            {
+                let handle = app.clone();
+                w.on_window_event(move |e| {
+                    if matches!(e, tauri::WindowEvent::Destroyed) {
+                        set_dock(&handle, false);
+                    }
+                });
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = w;
+        }
+        Err(e) => tracing::warn!(error = %e, "could not open the window"),
     }
 }
 

@@ -42,7 +42,12 @@ pub enum ServerCommand {
     ReconnectAll,
     Identify,
     Disconnect(DeviceId),
-    ApplyConfig(Box<Config>),
+    /// New settings; `removed` are clients the user chose to forget. Clients
+    /// missing from `config` for any other reason are kept.
+    ApplyConfig {
+        config: Box<Config>,
+        removed: Vec<DeviceId>,
+    },
     Shutdown(GoodbyeReason),
 }
 
@@ -917,13 +922,18 @@ impl Hub {
             ServerCommand::ReconnectAll => self.reconnect_all(),
             ServerCommand::Identify => self.identify(),
             ServerCommand::Disconnect(id) => self.drop_client(id, "disconnected by user"),
-            ServerCommand::ApplyConfig(cfg) => self.apply_config(*cfg),
+            ServerCommand::ApplyConfig { config, removed } => self.apply_config(*config, &removed),
             ServerCommand::Shutdown(_) => {} // handled in the loop
         }
     }
 
-    fn apply_config(&mut self, cfg: Config) {
+    fn apply_config(&mut self, mut cfg: Config, removed: &[DeviceId]) {
+        // A client may have joined after the agent built `cfg`: keep it.
+        let kept = cfg.keep_known_clients(&self.config, removed);
         self.config = cfg;
+        if !kept.is_empty() {
+            let _ = self.notice_tx.try_send(Notice::ConfigChanged(Box::new(self.config.clone())));
+        }
         self.engine.set_policy(self.config.server.switching.clone());
         let hcfg = health_cfg(&self.config);
         for slot in self.slots.values_mut() {

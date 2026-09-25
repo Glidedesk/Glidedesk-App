@@ -20,7 +20,7 @@ use objc2_core_graphics::{
     CGDisplayShowCursor, CGDisplayVendorNumber, CGEvent, CGEventField, CGEventFlags, CGEventSource,
     CGEventSourceStateID, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventTapProxy, CGEventType,
     CGGetActiveDisplayList, CGMainDisplayID, CGMouseButton, CGPreflightListenEventAccess, CGPreflightPostEventAccess,
-    CGRequestListenEventAccess, CGRequestPostEventAccess, CGScrollEventUnit, CGWarpMouseCursorPosition,
+    CGRequestPostEventAccess, CGScrollEventUnit, CGWarpMouseCursorPosition,
 };
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
@@ -110,12 +110,30 @@ pub fn permissions() -> Permissions {
     Permissions { accessibility: CGPreflightPostEventAccess(), input_monitoring: CGPreflightListenEventAccess() }
 }
 
+#[link(name = "ApplicationServices", kind = "framework")]
+unsafe extern "C" {
+    fn AXIsProcessTrustedWithOptions(options: *const c_void) -> bool;
+}
+
+/// Shows macOS's "“Glidedesk” would like to control this computer" prompt and
+/// adds the app to the Accessibility list. Call it from the app process (the one
+/// macOS knows as Glidedesk), not from the background agent.
+///
+/// Only Accessibility is requested: an *active* event tap and posting events
+/// both fall under it. Input Monitoring covers listen-only taps, which Glidedesk
+/// doesn't use, and granting it makes macOS ask to quit the app.
 pub fn request_permissions() {
-    if !CGPreflightPostEventAccess() {
-        let _ = CGRequestPostEventAccess();
+    if CGPreflightPostEventAccess() {
+        return;
     }
-    if !CGPreflightListenEventAccess() {
-        let _ = CGRequestListenEventAccess();
+    let key = objc2_foundation::NSString::from_str("AXTrustedCheckOptionPrompt");
+    let yes = objc2_foundation::NSNumber::new_bool(true);
+    let options = objc2_foundation::NSDictionary::from_slices(&[&*key], &[&*yes]);
+    // SAFETY: an NSDictionary is toll-free bridged to the CFDictionary the call expects.
+    let trusted = unsafe { AXIsProcessTrustedWithOptions(objc2::rc::Retained::as_ptr(&options).cast()) };
+    if !trusted {
+        // Older systems only register the app through this call.
+        let _ = CGRequestPostEventAccess();
     }
 }
 
@@ -365,9 +383,7 @@ unsafe extern "C-unwind" fn tap_callback(
 }
 
 pub fn start_capture() -> Result<Capture, InputError> {
-    if !CGPreflightListenEventAccess() {
-        return Err(InputError::Permission("Input Monitoring"));
-    }
+    // An active (filtering) tap needs Accessibility only; see `request_permissions`.
     if !CGPreflightPostEventAccess() {
         return Err(InputError::Permission("Accessibility"));
     }

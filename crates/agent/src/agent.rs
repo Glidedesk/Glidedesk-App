@@ -36,6 +36,8 @@ pub struct Agent {
     status: watch::Sender<AgentStatus>,
     events: broadcast::Sender<Event>,
     log_dir: String,
+    /// Last permission check (`None` before the first one).
+    permissions_ready: Option<bool>,
 }
 
 impl Agent {
@@ -67,6 +69,7 @@ impl Agent {
             status,
             events,
             log_dir,
+            permissions_ready: None,
         })
     }
 
@@ -265,13 +268,7 @@ impl Agent {
                     self.publish();
                 }
                 _ = perm_check.tick() => {
-                    // Picks up permissions granted in System Settings while running.
-                    if self.error.is_some() && !self.stopped && matches!(self.runtime, Runtime::Idle) {
-                        let p = glidedesk_input::permissions();
-                        if p.all_granted() {
-                            self.start_runtime();
-                        }
-                    }
+                    self.on_permission_tick().await;
                     self.publish();
                 }
                 () = shutdown_signal() => {
@@ -286,11 +283,42 @@ impl Agent {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
+    /// Follows permission changes made in System Settings while running:
+    /// granted → start (or restart, so the event tap is recreated with the new
+    /// rights); revoked → stop with a clear message instead of leaking input.
+    async fn on_permission_tick(&mut self) {
+        let server = self.config.device.role == Role::Server;
+        let ready = glidedesk_input::permissions().ready(server);
+        let was = self.permissions_ready.replace(ready);
+        if self.stopped || self.config.device.role == Role::Unset {
+            return;
+        }
+        match (was, ready) {
+            (Some(false), true) => {
+                info!("permission granted; starting sharing");
+                self.restart_runtime().await;
+            }
+            (Some(true), false) => {
+                warn!("permission revoked; stopping sharing");
+                self.stop_runtime(GoodbyeReason::Stopping).await;
+                self.fail(if cfg!(target_os = "macos") {
+                    "Accessibility permission was turned off; allow Glidedesk in System Settings → Privacy & Security → Accessibility".into()
+                } else {
+                    "access to the keyboard and mouse was lost; see Advanced → Self-test".into()
+                });
+            }
+            _ if ready && self.error.is_some() && matches!(self.runtime, Runtime::Idle) => self.start_runtime(),
+            _ => {}
+        }
+    }
+
     fn on_notice(&mut self, n: Notice) {
         let view = match n {
             Notice::ConfigChanged(cfg) => {
                 self.config = *cfg;
                 self.save_config();
+                // Open settings windows reload, so they never save a stale client list.
+                let _ = self.events.send(Event::ConfigChanged);
                 None
             }
             Notice::MonitorsSeen { id, monitors } => {
@@ -342,11 +370,17 @@ impl Agent {
         old.device != new.device || old.server.network != new.server.network || old.server.health != new.server.health
     }
 
-    async fn apply_config(&mut self, mut new: Config) -> Result<Value, String> {
+    /// Applies settings from the UI. Clients the server knows but `new` lacks are
+    /// kept (the window may have loaded before they joined); only `removed` go.
+    async fn apply_config(&mut self, mut new: Config, removed: &[DeviceId]) -> Result<Value, String> {
         if self.read_only {
             return Err("settings were written by a newer Glidedesk and are read-only".into());
         }
         new.device.id = self.config.device.id; // identity is never changed through the UI
+        let kept = new.keep_known_clients(&self.config, removed);
+        if !kept.is_empty() {
+            info!(count = kept.len(), "kept clients missing from a settings save");
+        }
         let issues = new.sanitize();
         self.store.save(&new).map_err(|e| e.to_string())?;
         let restart = Self::needs_restart(&self.config, &new);
@@ -357,13 +391,19 @@ impl Agent {
         } else {
             match &self.runtime {
                 Runtime::Server(h) => {
-                    let _ = h.commands.send(ServerCommand::ApplyConfig(Box::new(self.config.clone()))).await;
+                    let cmd =
+                        ServerCommand::ApplyConfig { config: Box::new(self.config.clone()), removed: removed.to_vec() };
+                    let _ = h.commands.send(cmd).await;
                 }
                 Runtime::Client(h) => {
                     let _ = h.commands.send(ClientCommand::ApplyConfig(Box::new(self.config.clone()))).await;
                 }
                 Runtime::Idle => self.start_runtime(),
             }
+        }
+        if !kept.is_empty() || !issues.is_empty() {
+            // The saved settings differ from what the window sent: it reloads.
+            let _ = self.events.send(Event::ConfigChanged);
         }
         Ok(json!({ "issues": issues.iter().map(|i| format!("{}: {}", i.key, i.message)).collect::<Vec<_>>() }))
     }
@@ -385,7 +425,7 @@ impl Agent {
             Request::Subscribe | Request::Quit => Ok(Value::Null),
             Request::Status => Ok(serde_json::to_value(&*self.status.borrow()).unwrap_or_default()),
             Request::GetConfig => Ok(to_json(&self.config)),
-            Request::SetConfig { config } => self.apply_config(*config).await,
+            Request::SetConfig { config } => self.apply_config(*config, &[]).await,
             Request::Start => {
                 self.stopped = false;
                 self.start_runtime();
@@ -403,6 +443,7 @@ impl Agent {
                 self.read_only = loaded.read_only;
                 self.stopped = false;
                 self.restart_runtime().await;
+                let _ = self.events.send(Event::ConfigChanged);
                 Ok(Value::Null)
             }
             Request::SwitchTo { id } => self.server_cmd(ServerCommand::SwitchTo(id)).await,
@@ -428,11 +469,11 @@ impl Agent {
                 let mut cfg = self.config.clone();
                 let entry = cfg.server.clients.iter_mut().find(|c| c.id == id).ok_or("unknown client")?;
                 entry.blocked = blocked;
-                self.apply_config(cfg).await
+                self.apply_config(cfg, &[]).await
             }
             Request::Forget { id } => {
                 let cfg = self.forget_client(id);
-                self.apply_config(cfg).await
+                self.apply_config(cfg, &[id]).await
             }
             Request::ListInterfaces => Ok(to_json(&glidedesk_net::list_interfaces())),
             Request::ExportConfig { layout_only } => {
@@ -453,6 +494,7 @@ impl Agent {
                 let fresh = self.store.reset(&self.config).map_err(|e| e.to_string())?;
                 self.config = fresh;
                 self.restart_runtime().await;
+                let _ = self.events.send(Event::ConfigChanged);
                 Ok(Value::Null)
             }
             Request::RequestPermissions => {

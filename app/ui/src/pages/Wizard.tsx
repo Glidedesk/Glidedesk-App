@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api, errorText } from "../lib/api";
 import { useConfig } from "../lib/config";
 import type { AgentStatus, Config, Role } from "../lib/types";
-import { Button, Callout, TextInput } from "../components/ui";
+import { Badge, Button, Callout, TextInput } from "../components/ui";
 
 export function Wizard({ status, config, onDone }: { status: AgentStatus; config: Config; onDone: () => void }) {
   const [step, setStep] = useState(0);
@@ -50,19 +50,25 @@ export function Wizard({ status, config, onDone }: { status: AgentStatus; config
       <h2 className="text-[22px] font-semibold">{mac ? "Allow Glidedesk to use the keyboard and mouse" : "Almost there"}</h2>
       {mac ? (
         <>
-          <p className="text-muted">macOS asks once. Turn Glidedesk on in both lists, then come back — this page updates by itself.</p>
+          <p className="text-muted">
+            Glidedesk needs <b>Accessibility</b> to read and move the keyboard and mouse. Click Allow, then turn Glidedesk on in System Settings.
+            This page comes back and updates by itself.
+          </p>
           <div className="space-y-2">
             <div className="flex items-center justify-between rounded-xl border border-line bg-panel px-4 py-3">
-              <span>Accessibility {perms.accessibility ? "✓" : ""}</span>
-              <Button onClick={() => void api.openExternal("accessibility").catch((e) => setErr(errorText(e)))}>Open</Button>
+              <span className="flex items-center gap-2">
+                Accessibility
+                {perms.accessibility ? <Badge tone="ok">Allowed</Badge> : <Badge tone="warn">Needed</Badge>}
+              </span>
+              {!perms.accessibility && (
+                <div className="flex gap-2">
+                  <Button variant="primary" onClick={() => void api.requestPermissions().catch((e) => setErr(errorText(e)))}>
+                    Allow…
+                  </Button>
+                  <Button onClick={() => void api.openExternal("accessibility").catch((e) => setErr(errorText(e)))}>Open System Settings</Button>
+                </div>
+              )}
             </div>
-            {role === "server" && (
-              <div className="flex items-center justify-between rounded-xl border border-line bg-panel px-4 py-3">
-                <span>Input Monitoring {perms.input_monitoring ? "✓" : ""}</span>
-                <Button onClick={() => void api.openExternal("input-monitoring").catch((e) => setErr(errorText(e)))}>Open</Button>
-              </div>
-            )}
-            <Button onClick={() => void api.requestPermissions().catch((e) => setErr(errorText(e)))}>Ask macOS again</Button>
           </div>
         </>
       ) : (

@@ -84,11 +84,22 @@ pub async fn supervise(app: AppHandle, link: Arc<Link>) {
                 while let Some(ev) = events.recv().await {
                     match ev {
                         Event::Status(s) => {
+                            let prev = link.status();
+                            if !prev.version.is_empty()
+                                && !prev.permissions.accessibility
+                                && s.permissions.accessibility
+                            {
+                                // Granted in System Settings: come back to the front.
+                                crate::windows::raise_main(&app);
+                            }
                             *link.status.write().unwrap_or_else(std::sync::PoisonError::into_inner) = (*s).clone();
                             let _ = app.emit("agent-status", &*s);
                             crate::tray::refresh(&app, &s);
                         }
                         Event::Notice(n) => on_notice(&app, &n),
+                        Event::ConfigChanged => {
+                            let _ = app.emit("agent-config", ());
+                        }
                         Event::Exiting => {
                             if !link.restarting.load(Ordering::SeqCst) {
                                 // Quit from the tray, the installer (upgrade) or OS shutdown.

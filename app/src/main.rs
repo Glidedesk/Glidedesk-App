@@ -4,6 +4,7 @@
 
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod autostart;
 mod commands;
 mod link;
 mod tray;
@@ -14,7 +15,6 @@ use std::sync::Arc;
 use glidedesk_config::Role;
 use glidedesk_ipc::Request;
 use tauri::{AppHandle, Manager, RunEvent};
-use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
 
 use crate::link::Link;
 
@@ -48,14 +48,7 @@ pub async fn sync_autostart(app: &AppHandle, link: &Link) {
         Ok(v) => v.get("start_at_login").and_then(serde_json::Value::as_bool).unwrap_or(true),
         Err(_) => return,
     };
-    let al = app.autolaunch();
-    let has = al.is_enabled().unwrap_or(false);
-    let res = match (want, has) {
-        (true, false) => al.enable(),
-        (false, true) => al.disable(),
-        _ => Ok(()),
-    };
-    if let Err(e) = res {
+    if let Err(e) = autostart::set(app, want) {
         tracing::warn!(error = %e, "could not update start-at-login");
     }
 }
@@ -88,7 +81,10 @@ fn main() {
             // Launching again (Start menu, Finder) opens the window.
             windows::show_main(app, None);
         }))
-        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--background"])))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--background"]),
+        ))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(link.clone())
@@ -98,7 +94,8 @@ fn main() {
             commands::status,
             commands::export_settings,
             commands::import_settings,
-            commands::open_external
+            commands::open_external,
+            commands::request_permissions
         ])
         .setup(move |app| {
             #[cfg(target_os = "macos")]

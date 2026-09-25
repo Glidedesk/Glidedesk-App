@@ -70,17 +70,23 @@ export function ComputersPage({ status, config, update }: { status: AgentStatus;
   const { run } = useToast();
   const views = status.server?.clients ?? [];
   const entry = config.server.clients.find((c) => c.id === open);
+  // Live clients the settings copy doesn't list yet (it reloads on its own) still show.
+  const known = new Set(config.server.clients.map((c) => c.id));
+  const rows: { id: DeviceId; name: string; blocked: boolean; mac_address: string; configured: boolean }[] = [
+    ...config.server.clients.map((c) => ({ ...c, configured: true })),
+    ...views.filter((v) => !known.has(v.id)).map((v) => ({ id: v.id, name: v.name, blocked: v.blocked, mac_address: "", configured: false })),
+  ];
 
   return (
     <Page title="Computers" subtitle="Every computer this server has seen. Offline ones stay here with their settings.">
-      {config.server.clients.length === 0 ? (
+      {rows.length === 0 ? (
         <EmptyState icon={<Icon.Computers size={24} />} title="No computers yet">
           Install Glidedesk on another computer and choose <b>Client</b>. It appears here automatically and is placed on a free side of
           this screen.
         </EmptyState>
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
-          {config.server.clients.map((c) => {
+          {rows.map((c) => {
             const v = views.find((x) => x.id === c.id);
             const state = v?.state ?? "never-connected";
             const online = ["online", "degraded", "locked"].includes(state);
@@ -124,7 +130,7 @@ export function ComputersPage({ status, config, update }: { status: AgentStatus;
                       Wake
                     </Button>
                   )}
-                  <Button icon={<Icon.Settings size={16} />} onClick={() => setOpen(c.id)}>
+                  <Button icon={<Icon.Settings size={16} />} disabled={!c.configured} onClick={() => setOpen(c.id)}>
                     Settings
                   </Button>
                 </div>

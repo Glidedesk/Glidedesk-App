@@ -31,7 +31,8 @@ export const api = {
   wake: (id: DeviceId) => agent({ cmd: "wake", id }),
   interfaces: () => agent<NetInterface[]>({ cmd: "list_interfaces" }),
   resetConfig: () => agent({ cmd: "reset_config" }),
-  requestPermissions: () => agent({ cmd: "request_permissions" }),
+  /** Asks macOS from the app itself, so the prompt names Glidedesk. */
+  requestPermissions: () => invoke<void>("request_permissions"),
   selfTest: () => agent<Record<string, unknown>>({ cmd: "self_test" }),
   exportSettings: (layoutOnly: boolean) => invoke<boolean>("export_settings", { layoutOnly }),
   importSettings: () => invoke<ImportPreview | null>("import_settings"),
@@ -44,6 +45,11 @@ export function onStatus(cb: (s: AgentStatus) => void): Promise<UnlistenFn> {
 
 export function onNotice(cb: (n: NoticeView) => void): Promise<UnlistenFn> {
   return listen<NoticeView>("agent-notice", (e) => cb(e.payload));
+}
+
+/** Settings changed outside this window (new client, reset, reload). */
+export function onConfigChanged(cb: () => void): Promise<UnlistenFn> {
+  return listen("agent-config", () => cb());
 }
 
 export function onNavigate(cb: (page: string) => void): Promise<UnlistenFn> {

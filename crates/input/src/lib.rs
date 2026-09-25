@@ -109,19 +109,22 @@ pub enum InputError {
     Os(String),
 }
 
-/// OS permissions the app needs (PLAN §6.6).
+/// OS permissions the app needs (PLAN §6.6, §14 B2).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct Permissions {
-    /// macOS Accessibility (inject + event tap). Always true on Windows.
+    /// macOS Accessibility: posting events *and* the active event tap the
+    /// server uses. Linux: a virtual input device (uinput) or `XTest`. Always true on Windows.
     pub accessibility: bool,
-    /// macOS Input Monitoring (listen-only taps). Always true on Windows.
+    /// macOS Input Monitoring (listen-only taps — not needed by Glidedesk, shown for
+    /// information). Linux: an X11 session, needed to share this computer's input.
     pub input_monitoring: bool,
 }
 
 impl Permissions {
+    /// Everything the given role needs is allowed.
     #[must_use]
-    pub const fn all_granted(&self) -> bool {
-        self.accessibility && self.input_monitoring
+    pub const fn ready(&self, server: bool) -> bool {
+        if cfg!(target_os = "linux") && server { self.input_monitoring } else { self.accessibility }
     }
 }
 

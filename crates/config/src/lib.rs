@@ -5,6 +5,7 @@
 
 pub mod cidr;
 pub mod export;
+mod merge;
 pub mod migrate;
 pub mod schema;
 pub mod store;

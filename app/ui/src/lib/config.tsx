@@ -1,7 +1,7 @@
 // The editable config, shared by every page through one provider.
 // Edits are debounced; a newer reload/commit always wins over older work.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api, errorText } from "./api";
+import { api, errorText, onConfigChanged } from "./api";
 import type { Config } from "./types";
 
 type Update = (mutate: (c: Config) => void, immediate?: boolean) => void;
@@ -25,6 +25,8 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const pending = useRef<Config | null>(null);
+  // Edits behind `pending`, so they can be re-applied on top of a reloaded config.
+  const replay = useRef<((c: Config) => void)[]>([]);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Every reload/commit/flush takes a ticket; stale results are ignored.
   const gen = useRef(0);
@@ -33,6 +35,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     if (timer.current) clearTimeout(timer.current);
     timer.current = null;
     pending.current = null;
+    replay.current = [];
   };
 
   const reload = useCallback(async () => {
@@ -53,9 +56,40 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     void reload();
   }, [reload]);
 
+  // The agent changed settings by itself (a computer joined, reset, reload):
+  // take its version, then re-apply an edit that was still waiting to be saved.
+  useEffect(() => {
+    const un = onConfigChanged(() => {
+      const edits = pending.current ? replay.current.slice() : [];
+      cancelPending();
+      replay.current = [];
+      const ticket = ++gen.current;
+      void api.getConfig().then(
+        (fresh) => {
+          if (ticket !== gen.current) return;
+          if (edits.length === 0) {
+            setConfig(fresh);
+            return;
+          }
+          const next = structuredClone(fresh);
+          for (const m of edits) m(next);
+          setConfig(next);
+          pending.current = next;
+          replay.current = edits;
+          timer.current = setTimeout(() => void flushRef.current(), 0);
+        },
+        (e) => {
+          if (ticket === gen.current) setError(errorText(e));
+        },
+      );
+    });
+    return () => void un.then((f) => f());
+  }, []);
+
   const flush = useCallback(async () => {
     const next = pending.current;
     pending.current = null;
+    replay.current = [];
     timer.current = null;
     if (!next) return;
     const ticket = ++gen.current;
@@ -76,8 +110,12 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     }
   }, [reload]);
 
+  const flushRef = useRef(flush);
+  flushRef.current = flush;
+
   const update = useCallback<Update>(
     (mutate, immediate = false) => {
+      replay.current.push(mutate);
       setConfig((prev) => {
         if (!prev) return prev;
         const next = structuredClone(prev);
