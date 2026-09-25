@@ -138,7 +138,9 @@ async fn full_session() {
     wait_for(&mut srv_status, "focus home", |v| v.focus.is_none()).await;
     wait_injected(&injector, "released", |e| e.contains(&Input::Key { key: KeyCode(0x04), down: false })).await;
     assert!(cap_ctl.calls.lock().unwrap().contains(&ControlCall::Grab(false)));
-    assert!(cap_ctl.calls.lock().unwrap().iter().any(|c| matches!(c, ControlCall::Warp(p) if p.x == 999)));
+    assert!(
+        cap_ctl.calls.lock().unwrap().iter().any(|c| matches!(c, ControlCall::Warp(p) if (990..=999).contains(&p.x)))
+    );
 
     // Hotkey Ctrl+Alt+L locks the cursor: pushing the edge does nothing.
     for (k, d) in [(0xE0, true), (0xE2, true), (0x0F, true), (0x0F, false), (0xE2, false), (0xE0, false)] {

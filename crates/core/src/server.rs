@@ -236,9 +236,63 @@ struct Hub {
     last_edge_note: Option<(Instant, String)>,
     /// Last layout summary logged ("PC is on the right of Mac").
     layout_summary: String,
+    /// Motion statistics of the current stay on a client (logged on return).
+    visit: Option<Visit>,
     /// Server password (PLAN §14.1); `None` = open.
     verifier: Option<Arc<glidedesk_net::auth::Verifier>>,
     throttle: Arc<glidedesk_net::auth::Throttle>,
+}
+
+/// How the pointer moved while a client had control, for diagnosing "the
+/// cursor doesn't move well over there" from the log.
+struct Visit {
+    start: Instant,
+    moves: u32,
+    distance: f64,
+    max_step: i32,
+}
+
+impl Visit {
+    fn new() -> Self {
+        Self { start: Instant::now(), moves: 0, distance: 0.0, max_step: 0 }
+    }
+
+    fn moved(&mut self, dx: i32, dy: i32) {
+        self.moves += 1;
+        self.distance += f64::from(dx).hypot(f64::from(dy));
+        self.max_step = self.max_step.max(dx.abs().max(dy.abs()));
+    }
+
+    fn summary(&self) -> String {
+        let secs = self.start.elapsed().as_secs_f64();
+        format!(
+            " (stayed {secs:.1} s: {} moves, {:.0} px, largest step {} px, {:.0} moves/s)",
+            self.moves,
+            self.distance,
+            self.max_step,
+            f64::from(self.moves) / secs.max(0.001)
+        )
+    }
+}
+
+/// Moves `p` `inset` pixels away from any outer edge of the monitor it is on.
+fn inset_from_edges(p: Point, monitors: &[MonitorInfo], inset: i32) -> Point {
+    let Some(r) = monitors.iter().map(|m| m.bounds).find(|r| r.contains(p)) else { return p };
+    let x = if p.x <= r.left() {
+        p.x + inset
+    } else if p.x >= r.right() - 1 {
+        p.x - inset
+    } else {
+        p.x
+    };
+    let y = if p.y <= r.top() {
+        p.y + inset
+    } else if p.y >= r.bottom() - 1 {
+        p.y - inset
+    } else {
+        p.y
+    };
+    Point::new(x.clamp(r.left(), r.right() - 1), y.clamp(r.top(), r.bottom() - 1))
 }
 
 fn health_cfg(c: &Config) -> HealthConfig {
@@ -327,6 +381,7 @@ impl Hub {
             capture_seen: false,
             last_edge_note: None,
             layout_summary: String::new(),
+            visit: None,
             verifier: config
                 .server
                 .network
@@ -490,7 +545,12 @@ impl Hub {
                         }
                         out
                     }
-                    Focus::Remote { .. } => self.engine.on_remote_move(dx, dy, ctx),
+                    Focus::Remote { .. } => {
+                        if let Some(v) = self.visit.as_mut() {
+                            v.moved(dx, dy);
+                        }
+                        self.engine.on_remote_move(dx, dy, ctx)
+                    }
                 };
                 self.apply(out, dx, dy);
             }
@@ -617,14 +677,19 @@ impl Hub {
                 self.push_clipboard(machine);
                 self.check_secure_input();
                 info!(client = %self.name_of(machine), x = pos.x, y = pos.y, "cursor went to another computer");
+                self.visit = Some(Visit::new());
                 self.publish();
             }
             Outcome::Return { pos, previous } => {
                 self.leave(previous);
                 self.capture.set_grab(false);
+                // Land a few points inside the edge: exactly on the edge pixel the
+                // slightest drift sent the cursor straight back to the client.
+                let pos = inset_from_edges(pos, &self.local_monitors, 4);
                 self.capture.warp(pos);
                 self.last_local_pos = pos;
-                info!(x = pos.x, y = pos.y, "cursor came back to this computer");
+                let visit = self.visit.take().map(|v| v.summary()).unwrap_or_default();
+                info!(x = pos.x, y = pos.y, "cursor came back to this computer{visit}");
                 self.publish();
             }
         }
