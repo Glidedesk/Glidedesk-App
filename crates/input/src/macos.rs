@@ -284,6 +284,10 @@ impl CaptureControl for Control {
         if was == grab {
             return;
         }
+        // The session tap only runs while another computer has control (see `GRAB_ONLY`).
+        if let Some(t) = self.0.session_tap.get() {
+            CGEvent::tap_enable(&t.0, grab);
+        }
         if grab {
             self.0.gate.on_grab();
             // Park the hidden cursor in the middle of the main screen. macOS keeps
@@ -358,7 +362,10 @@ impl CaptureControl for Control {
 
 /// Event types (`NSEventType` numbers) only swallowed while grabbed, never forwarded:
 /// tablet pointer/proximity, rotate/begin/end gesture, gesture, magnify, swipe,
-/// smart magnify, quick look, pressure, direct touch, change mode.
+/// smart magnify, quick look, pressure, direct touch, change mode. Only the
+/// session tap asks for them, and only while grabbed: a tap that sees gesture
+/// events, even one that lets them all through, turns this Mac's mouse and
+/// trackpad gestures off (swipe between spaces, Mission Control, smart zoom).
 const GRAB_ONLY: [u32; 13] = [23, 24, 18, 19, 20, 29, 30, 31, 32, 33, 34, 37, 38];
 
 fn mask(types: &[CGEventType]) -> u64 {
@@ -452,8 +459,12 @@ fn tap_disabled(shared: &Shared, ty: CGEventType) -> bool {
     if ty != CGEventType::TapDisabledByTimeout && ty != CGEventType::TapDisabledByUserInput {
         return false;
     }
-    for tap in [shared.tap.get(), shared.session_tap.get()].into_iter().flatten() {
-        CGEvent::tap_enable(&tap.0, true);
+    if let Some(t) = shared.tap.get() {
+        CGEvent::tap_enable(&t.0, true);
+    }
+    // The session tap stays off while this Mac has control (see `GRAB_ONLY`).
+    if let Some(t) = shared.session_tap.get() {
+        CGEvent::tap_enable(&t.0, shared.grabbed.load(Ordering::SeqCst));
     }
     shared.emit(CaptureEvent::Interrupted);
     true
@@ -587,6 +598,11 @@ fn handle(shared: &Shared, ty: CGEventType, ev: &CGEvent, pass: *mut CGEvent) ->
 }
 
 pub fn start_capture() -> Result<Capture, InputError> {
+    let (shared, events) = start_taps()?;
+    Ok(Capture { control: Arc::new(Control(shared)), events })
+}
+
+fn start_taps() -> Result<(Arc<Shared>, mpsc::Receiver<CaptureEvent>), InputError> {
     // An active (filtering) tap needs Accessibility only; see `request_permissions`.
     // No pre-check: creating the tap is the real test (a cached "no" must not
     // block a permission the user has just granted). It fails below without it.
@@ -608,24 +624,26 @@ pub fn start_capture() -> Result<Capture, InputError> {
     std::thread::Builder::new()
         .name("gd-capture".into())
         .spawn(move || {
-            let events = GRAB_ONLY.iter().fold(0u64, |m, t| m | (1u64 << t))
-                | (1u64 << SYSTEM_DEFINED)
-                | mask(&[
-                    CGEventType::MouseMoved,
-                    CGEventType::LeftMouseDown,
-                    CGEventType::LeftMouseUp,
-                    CGEventType::RightMouseDown,
-                    CGEventType::RightMouseUp,
-                    CGEventType::OtherMouseDown,
-                    CGEventType::OtherMouseUp,
-                    CGEventType::LeftMouseDragged,
-                    CGEventType::RightMouseDragged,
-                    CGEventType::OtherMouseDragged,
-                    CGEventType::ScrollWheel,
-                    CGEventType::KeyDown,
-                    CGEventType::KeyUp,
-                    CGEventType::FlagsChanged,
-                ]);
+            // The HID tap never asks for gesture or system-defined events (see
+            // `GRAB_ONLY`); the session tap, running only while grabbed, does.
+            let events = mask(&[
+                CGEventType::MouseMoved,
+                CGEventType::LeftMouseDown,
+                CGEventType::LeftMouseUp,
+                CGEventType::RightMouseDown,
+                CGEventType::RightMouseUp,
+                CGEventType::OtherMouseDown,
+                CGEventType::OtherMouseUp,
+                CGEventType::LeftMouseDragged,
+                CGEventType::RightMouseDragged,
+                CGEventType::OtherMouseDragged,
+                CGEventType::ScrollWheel,
+                CGEventType::KeyDown,
+                CGEventType::KeyUp,
+                CGEventType::FlagsChanged,
+            ]);
+            let session_events =
+                events | (1u64 << SYSTEM_DEFINED) | GRAB_ONLY.iter().fold(0u64, |m, t| m | (1u64 << t));
             let user = Arc::into_raw(thread_shared.clone()) as *mut c_void;
             // SAFETY: callback matches CGEventTapCallBack; `user` stays valid
             // until `Arc::from_raw` below, after the run loop has exited.
@@ -666,7 +684,7 @@ pub fn start_capture() -> Result<Capture, InputError> {
                     CGEventTapLocation::AnnotatedSessionEventTap,
                     CGEventTapPlacement::HeadInsertEventTap,
                     CGEventTapOptions::Default,
-                    events,
+                    session_events,
                     Some(session_callback),
                     user,
                 )
@@ -684,7 +702,8 @@ pub fn start_capture() -> Result<Capture, InputError> {
                 }
             });
             if let Some(t) = &session {
-                CGEvent::tap_enable(t, true);
+                // Off until another computer has control (`set_grab`).
+                CGEvent::tap_enable(t, thread_shared.grabbed.load(Ordering::SeqCst));
                 let _ = thread_shared.session_tap.set(SendPort(t.clone()));
             } else {
                 warn!(
@@ -711,7 +730,7 @@ pub fn start_capture() -> Result<Capture, InputError> {
     ready_rx
         .recv_timeout(Duration::from_secs(5))
         .map_err(|_| InputError::Os("capture thread did not start".into()))??;
-    Ok(Capture { control: Arc::new(Control(shared)), events: rx })
+    Ok((shared, rx))
 }
 
 // ---------------------------------------------------------------------------
@@ -1018,6 +1037,22 @@ mod tests {
             }
         }
         false
+    }
+
+    #[test]
+    fn the_session_tap_only_runs_while_a_client_has_control() {
+        if !enabled() {
+            return;
+        }
+        let (shared, _events) = start_taps().expect("event taps (Accessibility)");
+        let control = Control(shared.clone());
+        let tap = &shared.session_tap.get().expect("session tap").0;
+        assert!(!CGEvent::tap_is_enabled(tap), "on while this Mac has control: its gestures stop working");
+        control.set_grab(true);
+        assert!(CGEvent::tap_is_enabled(tap), "off while a client has control: gestures and remapped buttons act here");
+        control.set_grab(false);
+        assert!(!CGEvent::tap_is_enabled(tap), "still on after control came back");
+        control.stop();
     }
 
     #[test]
