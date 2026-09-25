@@ -26,7 +26,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 use crate::keymap::{self, hid};
-use crate::pin::{self, Warp};
+use crate::pin;
 use crate::{CAPTURE_QUEUE, Capture, CaptureControl, CaptureEvent, Injector, InputError, Permissions, Pressed};
 
 /// Wheel units (1/120 notch) per pixel of continuous (trackpad) scrolling.
@@ -251,10 +251,9 @@ struct Shared {
     /// (see `session_callback`).
     session_tap: OnceLock<SendPort>,
     pin: Mutex<Point>,
-    /// Our last warp, until its first motion event is seen: that event's delta
-    /// fields include the jump itself, so it is measured from the warp target
-    /// instead (see `crate::pin`).
-    warped: Mutex<Option<Warp>>,
+    /// Motion across our warps (see `crate::pin`). Its lock also keeps the
+    /// capture thread from pulling the cursor back while control changes hands.
+    motion: Mutex<pin::Tracker>,
     /// Device-dependent modifier bits last seen (to derive up/down).
     last_flags: Mutex<u64>,
     gate: crate::gate::KeyGate,
@@ -288,6 +287,10 @@ impl CaptureControl for Control {
         if grab && let Some(t) = session {
             CGEvent::tap_enable(&t.0, true);
         }
+        // Held until the cursor is where it belongs: the capture thread can't pull
+        // it back to the pin after control returned here (it checks `grabbed`
+        // under this lock), which left it stuck in the middle, cut off from the mouse.
+        let mut motion = lock(&self.0.motion);
         let was = self.0.grabbed.swap(grab, Ordering::SeqCst);
         if was == grab {
             return;
@@ -310,7 +313,7 @@ impl CaptureControl for Control {
             allow_background_cursor_hiding();
             let from = cursor_pos().unwrap_or(pin);
             repin(pin);
-            *lock(&self.0.warped) = Some(Warp::new(from, pin));
+            motion.warped(from, pin);
             let _ = CGDisplayHideCursor(CGMainDisplayID());
         } else {
             let _ = CGAssociateMouseAndMouseCursorPosition(true);
@@ -319,9 +322,10 @@ impl CaptureControl for Control {
     }
 
     fn warp(&self, p: Point) {
+        let mut motion = lock(&self.0.motion);
         let from = cursor_pos().unwrap_or(p);
         let _ = CGWarpMouseCursorPosition(cg(p));
-        *lock(&self.0.warped) = Some(Warp::new(from, p));
+        motion.warped(from, p);
         // Warping briefly suppresses local events; re-associate immediately.
         if !self.0.grabbed.load(Ordering::SeqCst) {
             let _ = CGAssociateMouseAndMouseCursorPosition(true);
@@ -514,24 +518,26 @@ fn handle(shared: &Shared, ty: CGEventType, ev: &CGEvent, pass: *mut CGEvent) ->
             // The integer delta fields. (The double accessor of the same fields
             // reports much larger numbers for real trackpad events.)
             let raw = (field(CGEventField::MouseEventDeltaX) as i32, field(CGEventField::MouseEventDeltaY) as i32);
-            let pending = lock(&shared.warped).take();
-            let ((dx, dy), pending) = pin::motion(pending, (loc.x, loc.y), raw);
-            *lock(&shared.warped) = pending;
-            let pos = if shared.grabbed.load(Ordering::Relaxed) {
-                // Keep the hidden cursor at the pin: pulled back as soon as it drifts,
-                // judged by where it really is (the event's location can lag a warp).
-                // Left to roam, it follows the hand all over this screen (see `crate::pin`).
+            // Lock order: `motion`, then `pin` (as in `set_grab`).
+            let mut motion = lock(&shared.motion);
+            let (dx, dy) = motion.motion(raw);
+            let pos = if shared.grabbed.load(Ordering::SeqCst) {
+                // Keep the hidden cursor near the pin, judged by where it really is
+                // (the event's location can lag a warp). Left to roam, it follows the
+                // hand all over this screen. One warp at a time (see `crate::pin`).
                 let at = *lock(&shared.pin);
-                if let Some(real) = cursor_pos()
+                if motion.settled()
+                    && let Some(real) = cursor_pos()
                     && pin::needs_repin(real, at)
                 {
                     repin(at);
-                    *lock(&shared.warped) = Some(Warp::new(real, at));
+                    motion.warped(real, at);
                 }
                 at
             } else {
                 pos
             };
+            drop(motion);
             shared.emit(CaptureEvent::Motion { pos, dx, dy });
         }
         CGEventType::LeftMouseDown | CGEventType::LeftMouseUp => {
@@ -633,7 +639,7 @@ fn start_taps() -> Result<(Arc<Shared>, mpsc::Receiver<CaptureEvent>), InputErro
         tap: OnceLock::new(),
         session_tap: OnceLock::new(),
         pin: Mutex::new(Point::default()),
-        warped: Mutex::new(None),
+        motion: Mutex::new(pin::Tracker::default()),
         last_flags: Mutex::new(0),
         gate: crate::gate::KeyGate::default(),
     });
@@ -1048,6 +1054,67 @@ mod tests {
         the_session_tap_only_runs_while_a_client_has_control();
         shortcuts_posted_by_mouse_software_go_to_the_client_while_grabbed();
         media_keys_go_to_the_client_while_grabbed();
+        clicks_and_motion_go_to_the_client_once_and_the_mac_cursor_stays();
+    }
+
+    fn drain(rx: &mut mpsc::Receiver<CaptureEvent>, for_ms: u64) -> Vec<CaptureEvent> {
+        let until = Instant::now() + Duration::from_millis(for_ms);
+        let mut out = Vec::new();
+        while Instant::now() < until {
+            match rx.try_recv() {
+                Ok(e) => out.push(e),
+                Err(_) => std::thread::sleep(Duration::from_millis(10)),
+            }
+        }
+        out
+    }
+
+    fn post_mouse(at: CGEventTapLocation, ty: CGEventType, p: Point, button: CGMouseButton, delta: (i64, i64)) {
+        let ev = CGEvent::new_mouse_event(None, ty, cg(p), button).expect("mouse event");
+        CGEvent::set_integer_value_field(Some(&ev), CGEventField::MouseEventDeltaX, delta.0);
+        CGEvent::set_integer_value_field(Some(&ev), CGEventField::MouseEventDeltaY, delta.1);
+        CGEvent::post(at, Some(&ev));
+    }
+
+    /// An external mouse while a client has control: its clicks arrive at the
+    /// hardware level, or re-posted by mouse software at the session level. Each
+    /// must reach the client exactly once, down before up; its motion must arrive
+    /// in full; and this Mac's cursor must stay put near the pin.
+    fn clicks_and_motion_go_to_the_client_once_and_the_mac_cursor_stays() {
+        let mut cap = start_capture().expect("event tap (Accessibility)");
+        cap.control.set_grab(true);
+        std::thread::sleep(Duration::from_millis(200));
+        let start = cursor_pos().expect("cursor");
+        let _ = drain(&mut cap.events, 100);
+
+        for at in [CGEventTapLocation::HIDEventTap, CGEventTapLocation::SessionEventTap] {
+            post_mouse(at, CGEventType::LeftMouseDown, start, CGMouseButton::Left, (0, 0));
+            post_mouse(at, CGEventType::LeftMouseUp, start, CGMouseButton::Left, (0, 0));
+            let clicks: Vec<bool> = drain(&mut cap.events, 500)
+                .into_iter()
+                .filter_map(|e| match e {
+                    CaptureEvent::Button { button: MouseButton::Left, down } => Some(down),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(clicks, vec![true, false], "a click posted at {at:?} reached the client {clicks:?}");
+        }
+
+        let mut p = start;
+        for _ in 0..40 {
+            p = Point::new(p.x + 25, p.y + 5);
+            post_mouse(CGEventTapLocation::HIDEventTap, CGEventType::MouseMoved, p, CGMouseButton::Left, (25, 5));
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let (dx, dy) = drain(&mut cap.events, 500).into_iter().fold((0, 0), |(x, y), e| match e {
+            CaptureEvent::Motion { dx, dy, .. } => (x + dx, y + dy),
+            _ => (x, y),
+        });
+        let now = cursor_pos().expect("cursor");
+        cap.control.set_grab(false);
+        cap.control.stop();
+        assert_eq!((dx, dy), (1000, 200), "the client got a different motion than the mouse made");
+        assert!(!pin::needs_repin(now, start), "this Mac's cursor moved away: {start:?} -> {now:?}");
     }
 
     /// Posts a key the way mouse utilities (Logi Options+, `SteerMouse`, …) do for

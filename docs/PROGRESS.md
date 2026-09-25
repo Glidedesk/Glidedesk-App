@@ -220,3 +220,16 @@ Known gaps (v4): still no real Windows device test from this Mac; the lab covers
       can't switch spaces or pull focus back). The "let through" marker is random per run.
       Real-tap test on macOS CI: the session tap is off, on while grabbed, off again.
       Reviewed by the ecc rust-reviewer agent (2 findings, both fixed).
+
+### Fix: an external mouse hardly moved / clicked badly on the client (the Mac's trackpad was fine)
+- [x] Cause 1: after each pull-back of the hidden Mac cursor (every 40 pt of drift since the pin
+      fix) the next event was judged by its location, which can predate the warp while its delta
+      already holds the jump — so the jump (-40 pt) was sent as motion. A fast external mouse
+      (1000 Hz, big steps) hit this every few events and barely moved; the trackpad rarely.
+- [x] Cause 2: the capture thread could pull the cursor back after control had returned to the
+      Mac (a race with `set_grab(false)`), leaving it stuck mid-screen, cut off from the mouse.
+- [x] Fix: `pin::Tracker` judges by delta alone (taking the jump out must fit the recent motion),
+      one warp in flight at a time, radius 80 pt; pull-back and hand-over share one lock.
+      Docker (local): fast-mouse / trackpad simulation with 0–3 events of queueing: every event
+      exactly the hand's motion. macOS CI real taps: clicks posted at HID and session level reach
+      the client exactly once; 40 moves arrive in full; the Mac cursor stays by the pin.
