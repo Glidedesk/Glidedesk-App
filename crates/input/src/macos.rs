@@ -283,8 +283,6 @@ struct Shared {
     warped: Mutex<Option<Point>>,
     /// Screen the cursor is pinned to while grabbed.
     pin_rect: Mutex<Rect>,
-    /// Sub-point motion carried to the next event (trackpads move in fractions).
-    remainder: Mutex<(f64, f64)>,
     /// When the hidden cursor was last pulled back to the pin.
     last_repin: Mutex<Option<Instant>>,
     /// Device-dependent modifier bits last seen (to derive up/down).
@@ -456,16 +454,13 @@ unsafe extern "C-unwind" fn tap_callback(
                 // (and its location may predate it). Drop this one event's motion.
                 (0, 0)
             } else {
-                // Fractional deltas (trackpads), carrying what is left over.
-                let fdx = CGEvent::double_value_field(Some(ev), CGEventField::MouseEventDeltaX);
-                let fdy = CGEvent::double_value_field(Some(ev), CGEventField::MouseEventDeltaY);
-                let mut rem = lock(&shared.remainder);
-                let (x, y) = (fdx + rem.0, fdy + rem.1);
-                let (ix, iy) = (x.trunc(), y.trunc());
-                *rem = (x - ix, y - iy);
+                // The integer delta fields. (The double accessor of the same
+                // fields reports much larger numbers for real trackpad events.)
+                let (ix, iy) =
+                    (field(CGEventField::MouseEventDeltaX) as i32, field(CGEventField::MouseEventDeltaY) as i32);
                 // Safety net: no real device moves this far in one event; a
                 // larger value is a warp artefact and would fling the cursor.
-                ((ix as i32).clamp(-MAX_STEP, MAX_STEP), (iy as i32).clamp(-MAX_STEP, MAX_STEP))
+                (ix.clamp(-MAX_STEP, MAX_STEP), iy.clamp(-MAX_STEP, MAX_STEP))
             };
             let pos = if shared.grabbed.load(Ordering::Relaxed) {
                 let pin = *lock(&shared.pin);
@@ -574,7 +569,6 @@ pub fn start_capture() -> Result<Capture, InputError> {
         pin: Mutex::new(Point::default()),
         warped: Mutex::new(None),
         pin_rect: Mutex::new(Rect::default()),
-        remainder: Mutex::new((0.0, 0.0)),
         last_repin: Mutex::new(None),
         last_flags: Mutex::new(0),
         gate: crate::gate::KeyGate::default(),
