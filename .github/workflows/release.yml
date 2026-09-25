@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Version
         run: |
           if [ "$IS_TAG" = true ]; then echo "GLIDEDESK_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"; fi
@@ -59,7 +59,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 12
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -101,7 +101,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Version
         run: |
           if [ "$IS_TAG" = true ]; then echo "GLIDEDESK_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"; fi
@@ -120,7 +120,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 12
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -140,7 +140,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Version
         run: |
           if [ "$IS_TAG" = true ]; then echo "GLIDEDESK_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"; fi
@@ -153,7 +153,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 12
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -194,7 +194,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
         with:
           path: output-build

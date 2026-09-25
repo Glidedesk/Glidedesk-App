@@ -23,6 +23,10 @@ env:
   CARGO_INCREMENTAL: "0"
   XWIN_ACCEPT_LICENSE: "1"
   XWIN_CROSS_COMPILER: clang
+  # No debug info: CI only needs pass/fail. Halves target/ size (the runner's
+  # 14 GB disk filled up during the Windows cross-check) and speeds up linking.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
 
 jobs:
   test:
@@ -30,7 +34,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h / | tail -1
 
       - name: System packages
         run: |
@@ -54,7 +63,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 12
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
