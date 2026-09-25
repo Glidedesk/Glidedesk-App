@@ -6,8 +6,9 @@ Use the installers in `output-build/`.
 ## Before you start
 - One **server** (the computer whose keyboard/mouse you use) and at least one **client**.
 - Same local network. Windows: allow Glidedesk on *Private* networks when asked.
-- macOS: grant **Accessibility** (both roles) and **Input Monitoring** (server) in
-  System Settings → Privacy & Security. The first-run window links there.
+- macOS: grant **Accessibility** (the only permission needed). The prompt and the list in
+  System Settings must show **Glidedesk** with its icon; after granting it, the Glidedesk
+  window comes back to the front (it shows in the Dock while open).
 
 ## 1. Install
 - [ ] macOS: open the `.dmg`, drag Glidedesk to Applications, open it
@@ -17,9 +18,19 @@ Use the installers in `output-build/`.
 - [ ] First window shows the setup: choose Server or Client.
 
 ## 2. Keyboard & mouse
-- [ ] Client appears on the server within a few seconds and is placed on a free side.
+- [ ] Client appears on the server (Computers page, with the window already open) within a few
+      seconds and is placed on a free side. Changing any setting afterwards keeps it.
+- [ ] Client: type the server's computer name (not its IP) as the address → connects.
+- [ ] Server Network → Password set: a client without it shows "needs a password" and is not
+      listed; with the right one it connects; 5 wrong tries block it for a minute.
 - [ ] Moving the cursor across that edge moves it onto the client; typing works.
-- [ ] Mac server → Windows client: Cmd+C / Cmd+V act as Ctrl+C / Ctrl+V.
+- [ ] Keys are native: on a Windows client, the Mac's ⌘ key is the Windows key and Ctrl+C copies;
+      Computers → Cmd / Ctrl → "Swap" makes ⌘C copy instead.
+- [ ] Scrolling on each computer follows its own direction setting (natural on the Mac only).
+- [ ] While the cursor is on the client, the server's own cursor stays hidden and **nothing moves
+      or clicks on the server** (also with trackpad gestures; also with an admin window in front
+      on a Windows server).
+- [ ] Crossing a wide client and coming back works on the **first** push at the edge.
 - [ ] Hold Shift while crossing: nothing stays stuck on either side.
 - [ ] Move back: the cursor returns where it left.
 - [ ] Layout page: drag the client to another side; the new edge works immediately.
@@ -35,12 +46,15 @@ Use the installers in `output-build/`.
 - [ ] Copy text on the server, move to the client, paste.
 - [ ] Copy on the client, move back, paste on the server.
 - [ ] Copy a screenshot/image both ways.
-- [ ] Copy a folder with a large file (e.g. 5 GB) in Explorer/Finder, move across, wait for the
-      Transfers bar to finish, paste in the other file manager.
+- [ ] Copy a folder with a large file (e.g. 5 GB), move across: **nothing is transferred** yet and
+      pasting with the mouse can't paste old files. Press ⌘V / Ctrl+V in a folder: the paste
+      waits while the files arrive (Transfers shows progress), then the file manager pastes them.
+- [ ] Without copying anything new, move back and forth several times: no transfer starts.
 - [ ] Windows: **Cut** a file, move to the other computer, paste → original goes to the Recycle Bin.
 - [ ] Turn off "Share clipboard" in the tray: nothing is sent.
 
 ## 5. Tray
+- [ ] Open the menu and leave it open for 30 s while clients are connected: it stays open.
 - [ ] Stop sharing → clients show the server offline; Start → they reconnect.
 - [ ] Restart Glidedesk → back within a few seconds.
 - [ ] Quit → both the tray icon and `glidedesk-agent` exit.

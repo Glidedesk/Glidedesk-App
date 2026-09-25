@@ -16,8 +16,9 @@ mouse (server role) needs an X11 session until Wayland desktops offer a capture 
 ## Install
 
 - **macOS:** open the `.dmg` and drag Glidedesk to Applications. First launch: right-click → Open
-  (macOS 15+: System Settings → Privacy & Security → Open Anyway). Allow **Accessibility**
-  (and **Input Monitoring** on the server) when asked.
+  (macOS 15+: System Settings → Privacy & Security → Open Anyway). Click **Allow…** and turn
+  Glidedesk on under **Accessibility** — that is the only permission needed; the window comes
+  back by itself.
 - **Windows:** run the setup. The same file installs, **updates** (keeps settings, restarts the app)
   or repairs. Silent: `setup.exe /S [/D=C:\path] [/NORESTART]` (exit code 3 = installed with a
   warning, e.g. firewall rule failed).
@@ -28,6 +29,21 @@ mouse (server role) needs an X11 session until Wayland desktops offer a capture 
 
 Glidedesk **starts at login** on every system (tray only, no window). Turn it off in
 General → Start at login.
+
+## Using it
+
+- **Connect:** clients find the server automatically. You can also type the server's
+  **computer name** (e.g. `Studio-Mac`) or IP address under *This computer → Server*.
+- **Password (optional):** on the server, *Network → Password*. Clients must enter the same
+  password; others can't connect and are never listed. The password never crosses the
+  network (SPAKE2 bound to the encrypted connection) and only a salted hash is stored.
+- **Keyboard and mouse behave natively:** keys act as on a keyboard plugged into the computer
+  you're controlling, and scrolling follows each computer's own setting (e.g. natural
+  scrolling on a Mac). Swapping Cmd and Ctrl is an option per computer.
+- **Files:** copy files, move to another computer and paste with the keyboard shortcut
+  (⌘V / Ctrl+V). Nothing is copied before you paste; the paste waits while the files arrive,
+  then your file manager pastes them. No size limit (free disk space is checked). To paste
+  with the mouse, first choose *Get … now* in the tray or window.
 
 Uninstall: Windows → Settings → Apps (asks whether to keep settings) · macOS → "Uninstall
 Glidedesk" in the DMG or Advanced → Uninstall · Linux → your package manager (settings in

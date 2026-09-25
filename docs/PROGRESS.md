@@ -119,3 +119,21 @@ To do:
 - Incident: a local smoke test overwrote and deleted the user's real Glidedesk settings (their
   installed 0.1.0 was running). Added `GLIDEDESK_HOME` isolation (config, logs, socket/pipe,
   staging) — all future tests must use it.
+
+## Version 3 (PLAN §14) — task tracker
+- [x] Phase 15: repo `soykot360/glidedesk` (private), `.gitignore` (project files only), signing
+      secrets set with `gh secret set`, first push; CI fixed (disk space, no debug info).
+- [x] Phase 16: B6 settings sync (config-changed event + replay of pending edits; stale saves
+      can't remove clients — only Forget), B11 tray updated in place, B1/B2 macOS Accessibility
+      prompt from the app process, Accessibility-only capture, LaunchServices login item, Dock
+      icon while a window is open, capture restarts on permission change.
+- [x] Phase 17: B5/B7 macOS cursor re-pinned at screen centre, gestures swallowed, Secure
+      Keyboard Entry warning; Windows raw-input re-pin; B8 native keys (schema v2) and scroll.
+- [x] Phase 18: B4 password (SPAKE2 + TLS exporter, Argon2id verifier, lockout, protocol 2),
+      B3 connect by computer name (mDNS name/host match, .local, DNS).
+- [x] Phase 19: B9/B10 files move only on paste (offer → held paste → fetch → replay), relay
+      across 3 computers, free-space check, "Get … now" in tray/window.
+- [ ] Phase 20: reviews, release build, GitHub CI/Release green, Graphify.
+Known gaps (v3): no real Windows/Linux device test from this Mac; Windows virtual-file paste
+(Explorer's own network progress) not implemented — files arrive first, then Explorer copies
+them from staging; macOS Finder has no "cut" so cut only applies to Windows sources.
