@@ -879,12 +879,12 @@ mod tests {
     use super::*;
 
     /// A real event tap takes over this Mac's keyboard and cursor while grabbed:
-    /// only where asked for (the macOS CI runner sets GLIDEDESK_TAP_TESTS).
+    /// only where asked for (the macOS CI runner sets `GLIDEDESK_TAP_TESTS`).
     fn enabled() -> bool {
         std::env::var_os("GLIDEDESK_TAP_TESTS").is_some()
     }
 
-    /// Posts a key the way mouse utilities (Logi Options+, SteerMouse, …) do for
+    /// Posts a key the way mouse utilities (Logi Options+, `SteerMouse`, …) do for
     /// buttons set to a shortcut: at the session level, past the HID tap.
     fn post_key(code: u16, down: bool, flags: CGEventFlags) {
         let ev = CGEvent::new_keyboard_event(None, code, down).expect("keyboard event");
