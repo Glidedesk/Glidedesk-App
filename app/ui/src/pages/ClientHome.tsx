@@ -57,7 +57,7 @@ export function ClientHome({ status, config, update }: { status: AgentStatus; co
           <TextInput label="Server address" value={cl.server_address} placeholder="Automatic" onChange={(v) => update((x) => void (x.client.server_address = v.trim()))} />
         </Row>
         <Row label="Password" hint="Only if the server has a password (Network → Password on the server).">
-          <TextInput type="password" label="Server password" value={cl.password} placeholder="None" onChange={(v) => update((x) => void (x.client.password = v))} />
+          <TextInput type="password" autoComplete="current-password" label="Server password" value={cl.password} placeholder="None" onChange={(v) => update((x) => void (x.client.password = v))} />
         </Row>
       </Section>
       <Section title="Overrides" description="Settings here win over the server's settings for this computer.">

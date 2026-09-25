@@ -206,6 +206,8 @@ export function TextInput({
   width = "w-64",
   invalid,
   type = "text",
+  autoComplete,
+  describedBy,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -214,11 +216,15 @@ export function TextInput({
   width?: string;
   invalid?: boolean;
   type?: "text" | "password";
+  /** For password fields: "new-password" (setting one) or "current-password" (entering one). */
+  autoComplete?: "new-password" | "current-password";
+  describedBy?: string;
 }) {
   return (
     <input
       type={type}
-      autoComplete={type === "password" ? "off" : undefined}
+      autoComplete={autoComplete}
+      aria-describedby={describedBy}
       aria-label={label}
       aria-invalid={invalid || undefined}
       className={`${width} rounded-lg border bg-panel px-2 py-1 ${invalid ? "border-bad" : "border-line"}`}

@@ -94,7 +94,7 @@ export function Wizard({ status, config, onDone }: { status: AgentStatus; config
           <p className="text-muted">Leave empty to find it automatically on this network, or type its computer name or IP address.</p>
           <TextInput label="Server address" value={address} placeholder="Automatic" onChange={setAddress} width="w-80" />
           <p className="text-muted">If the server has a password, enter it here.</p>
-          <TextInput type="password" label="Server password" value={password} placeholder="No password" onChange={setPassword} width="w-80" />
+          <TextInput type="password" autoComplete="current-password" label="Server password" value={password} placeholder="No password" onChange={setPassword} width="w-80" />
         </>
       )}
     </div>,

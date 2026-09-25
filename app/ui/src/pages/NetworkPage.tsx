@@ -50,8 +50,20 @@ function PasswordSection({ enabled }: { enabled: boolean }) {
       </Row>
       <Row label={enabled ? "Change password" : "Set a password"} hint="At least 8 characters. Enter the same password on each client (This computer → Server).">
         <div className="flex flex-col items-end gap-2">
-          <TextInput type="password" label="New password" value={pw} placeholder="New password" onChange={setPw} />
-          <TextInput type="password" label="Repeat password" value={again} placeholder="Repeat" invalid={mismatch} onChange={setAgain} />
+          <TextInput type="password" autoComplete="new-password" label="New password" value={pw} placeholder="New password" onChange={setPw} />
+          <TextInput
+            type="password"
+            autoComplete="new-password"
+            label="Repeat password"
+            value={again}
+            placeholder="Repeat"
+            invalid={mismatch}
+            describedBy="pw-hint"
+            onChange={setAgain}
+          />
+          <div id="pw-hint" className={`text-[12px] ${mismatch ? "text-bad" : "text-muted"}`} aria-live="polite">
+            {mismatch ? "The passwords don't match." : pw.length > 0 && pw.length < 8 ? "Use at least 8 characters." : ""}
+          </div>
           <div className="flex gap-2">
             {enabled && (
               <Button variant="danger" onClick={() => void run(() => api.setServerPassword(""), "Password removed")}>

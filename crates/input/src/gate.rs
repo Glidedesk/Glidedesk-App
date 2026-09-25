@@ -80,6 +80,9 @@ impl KeyGate {
         let mut g = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let held = g.held.clone();
         g.passthrough = held;
+        // A held paste's key-up now takes the grabbed path: don't wait for it,
+        // or that key would stay swallowed for good.
+        g.paste.release_held();
     }
 }
 

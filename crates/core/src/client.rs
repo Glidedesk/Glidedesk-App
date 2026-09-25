@@ -197,6 +197,24 @@ fn bind_ip(cfg: &Config, want_v6: bool) -> Option<IpAddr> {
         .and_then(|i| i.addrs.into_iter().map(|a| a.ip).find(|ip| ip.is_ipv6() == want_v6 && !ip.is_loopback()))
 }
 
+/// Reads frames on its own task until the stream ends or fails; the last item is
+/// `Ok(None)` (clean end) or the error.
+fn spawn_frames<T: serde::de::DeserializeOwned + Send + 'static>(
+    mut reader: FrameReader,
+) -> mpsc::Receiver<Result<Option<T>, glidedesk_net::NetError>> {
+    let (tx, rx) = mpsc::channel(1024);
+    tokio::spawn(async move {
+        loop {
+            let item = reader.recv::<T>().await;
+            let last = !matches!(item, Ok(Some(_)));
+            if tx.send(item).await.is_err() || last {
+                return;
+            }
+        }
+    });
+    rx
+}
+
 enum SessionEnd {
     Command(ClientCommand),
     Lost(String),
@@ -615,7 +633,7 @@ impl Runner {
         let (taken_tx, mut taken_rx) = mpsc::channel::<glidedesk_proto::FileSetId>(8);
         // The first unidirectional stream is the input stream; anything else
         // (clipboard, files) is handled on its own task.
-        let mut input = loop {
+        let input = loop {
             let Ok(Ok(mut s)) = tokio::time::timeout(CONNECT_TIMEOUT, conn.accept_uni()).await else {
                 return SessionEnd::Lost("server did not open the input stream".into());
             };
@@ -629,6 +647,10 @@ impl Runner {
             self.receive_stream(kind[0], s, &conn, &settings);
         };
         let mut paste_guard = glidedesk_input::paste::PasteGuard::new(Platform::current());
+        // `FrameReader::recv` isn't cancel-safe (a frame read half-way would be lost
+        // when another `select!` branch wins), so each stream gets its own reader task.
+        let mut input = spawn_frames::<Input>(input);
+        let mut reader = spawn_frames::<Control>(reader);
         let mut offer_watch = self.sync.hold_watch();
         self.preferred = Some(welcome.device_id);
         self.last_sent = None;
@@ -694,7 +716,7 @@ impl Runner {
                     let t = self.sync.transfers.snapshot();
                     self.status.send_modify(|v| v.transfers = t);
                 }
-                ev = input.recv::<Input>() => match ev {
+                ev = input.recv() => match ev.unwrap_or(Ok(None)) {
                     Ok(Some(ev)) => {
                         if !self.on_input(ev, &mut paste_guard, &taken_tx) {
                             return SessionEnd::Lost("injection thread stopped".into());
@@ -703,7 +725,7 @@ impl Runner {
                     Ok(None) => return SessionEnd::Lost("input stream closed".into()),
                     Err(e) => return SessionEnd::Lost(e.to_string()),
                 },
-                msg = reader.recv::<Control>() => match msg {
+                msg = reader.recv() => match msg.unwrap_or(Ok(None)) {
                     Ok(Some(Control::Ping { seq, sent_us, rtt_us })) => {
                         last_ping = Instant::now();
                         let status = (self.status_fn)();

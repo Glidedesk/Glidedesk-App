@@ -362,14 +362,16 @@ impl Sync {
             send.write_all(&[stream_kind::FETCH]).await.map_err(|e| e.to_string())?;
             send.write_all(&p.offer.set.0.to_le_bytes()).await.map_err(|e| e.to_string())?;
             let _ = send.finish();
-            // The sender may not send more than it offered.
-            let manifest =
-                receive_set(&mut recv, &dir, p.offer.total_bytes, progress.clone()).await.map_err(|e| match e {
+            // The sender may not send more than it offered. `0` means "no limit"
+            // to `receive_set`, so an empty offer may send at most 1 byte.
+            let manifest = receive_set(&mut recv, &dir, p.offer.total_bytes.max(1), progress.clone()).await.map_err(
+                |e| match e {
                     glidedesk_transfer::TransferError::Net(_) => {
                         format!("{name} is no longer available on {}", p.peer)
                     }
                     other => other.to_string(),
-                })?;
+                },
+            )?;
             Ok::<Manifest, String>(manifest)
         }
         .await;

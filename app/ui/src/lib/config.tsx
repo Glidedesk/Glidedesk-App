@@ -57,32 +57,40 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   }, [reload]);
 
   // The agent changed settings by itself (a computer joined, reset, reload):
-  // take its version, then re-apply an edit that was still waiting to be saved.
+  // take its version and re-apply every edit not saved yet — including edits
+  // made while the fresh copy was loading.
+  const changedGen = useRef(0);
+  const inFlight = useRef(0);
+  const refetchAfterSave = useRef(false);
+  const refreshRef = useRef<() => void>(() => {});
   useEffect(() => {
-    const un = onConfigChanged(() => {
-      const edits = pending.current ? replay.current.slice() : [];
-      cancelPending();
-      replay.current = [];
-      const ticket = ++gen.current;
+    const refresh = () => {
+      const mine = ++changedGen.current;
       void api.getConfig().then(
         (fresh) => {
-          if (ticket !== gen.current) return;
+          if (mine !== changedGen.current) return; // a newer event is loading
+          if (inFlight.current > 0) {
+            // A save is on its way; this copy may predate it. Look again after it.
+            refetchAfterSave.current = true;
+            return;
+          }
+          const edits = pending.current ? replay.current.slice() : [];
           if (edits.length === 0) {
             setConfig(fresh);
             return;
           }
+          if (timer.current) clearTimeout(timer.current);
           const next = structuredClone(fresh);
           for (const m of edits) m(next);
           setConfig(next);
           pending.current = next;
-          replay.current = edits;
           timer.current = setTimeout(() => void flushRef.current(), 0);
         },
-        (e) => {
-          if (ticket === gen.current) setError(errorText(e));
-        },
+        (e) => setError(errorText(e)),
       );
-    });
+    };
+    refreshRef.current = refresh;
+    const un = onConfigChanged(refresh);
     return () => void un.then((f) => f());
   }, []);
 
@@ -94,6 +102,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     if (!next) return;
     const ticket = ++gen.current;
     setSaving(true);
+    inFlight.current += 1;
     try {
       await api.setConfig(next);
       if (ticket === gen.current) {
@@ -103,10 +112,17 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       if (ticket === gen.current) {
         setError(errorText(e));
-        void reload();
+        // Show what is really saved — unless the user already made a newer edit,
+        // which must not be thrown away (it is saved on its own timer).
+        if (!pending.current) void reload();
       }
     } finally {
       setSaving(false);
+      inFlight.current -= 1;
+      if (inFlight.current === 0 && refetchAfterSave.current) {
+        refetchAfterSave.current = false;
+        refreshRef.current();
+      }
     }
   }, [reload]);
 

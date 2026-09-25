@@ -195,10 +195,31 @@ pub fn server_proof_ok(expected: &[u8; PROOF_LEN], got: &[u8]) -> bool {
 #[derive(Debug, Default)]
 pub struct Throttle {
     peers: std::sync::Mutex<std::collections::HashMap<std::net::IpAddr, (u32, std::time::Instant)>>,
+    /// Failures from all peers in the current minute (window start, count,
+    /// blocked until): a guesser rotating addresses still hits this.
+    global: std::sync::Mutex<Option<(std::time::Instant, u32, std::time::Instant)>>,
 }
 
 const FREE_TRIES: u32 = 5;
 const MAX_PEERS: usize = 4096;
+/// Wrong passwords per minute from everyone together before all wait a minute.
+const GLOBAL_PER_MINUTE: u32 = 30;
+
+/// One bucket per IPv4 address or IPv6 /64: a single LAN host can use any
+/// number of addresses inside its /64.
+fn bucket(ip: std::net::IpAddr) -> std::net::IpAddr {
+    match ip {
+        std::net::IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                std::net::IpAddr::V4(v4)
+            } else {
+                let s = v6.segments();
+                std::net::IpAddr::V6(std::net::Ipv6Addr::new(s[0], s[1], s[2], s[3], 0, 0, 0, 0))
+            }
+        }
+        v4 @ std::net::IpAddr::V4(_) => v4,
+    }
+}
 
 impl Throttle {
     fn lock(
@@ -210,11 +231,28 @@ impl Throttle {
     /// Is this peer currently locked out?
     #[must_use]
     pub fn blocked(&self, ip: std::net::IpAddr, now: std::time::Instant) -> bool {
-        self.lock().get(&ip).is_some_and(|(_, until)| *until > now)
+        let global_block =
+            self.global.lock().unwrap_or_else(std::sync::PoisonError::into_inner).is_some_and(|(_, _, u)| u > now);
+        global_block || self.lock().get(&bucket(ip)).is_some_and(|(_, until)| *until > now)
+    }
+
+    fn fail_global(&self, now: std::time::Instant) {
+        let mut g = self.global.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (start, count, until) = match *g {
+            Some((start, count, until)) if now.duration_since(start) < std::time::Duration::from_secs(60) => {
+                (start, count.saturating_add(1), until)
+            }
+            Some((_, _, until)) => (now, 1, until),
+            None => (now, 1, now),
+        };
+        let until = if count >= GLOBAL_PER_MINUTE { now + std::time::Duration::from_secs(60) } else { until };
+        *g = Some((start, count, until));
     }
 
     /// Records a wrong password; returns how long the peer is now blocked.
     pub fn fail(&self, ip: std::net::IpAddr, now: std::time::Instant) -> std::time::Duration {
+        self.fail_global(now);
+        let ip = bucket(ip);
         let mut peers = self.lock();
         if peers.len() >= MAX_PEERS && !peers.contains_key(&ip) {
             peers.retain(|_, (_, until)| *until > now);
@@ -235,7 +273,7 @@ impl Throttle {
     }
 
     pub fn success(&self, ip: std::net::IpAddr) {
-        self.lock().remove(&ip);
+        self.lock().remove(&bucket(ip));
     }
 }
 
@@ -309,5 +347,24 @@ mod tests {
         assert!(!t.blocked(ip, now + Duration::from_secs(121)));
         t.success(ip);
         assert!(!t.blocked(ip, now));
+    }
+
+    #[test]
+    fn ipv6_addresses_in_one_64_share_a_bucket_and_a_global_cap_applies() {
+        let t = Throttle::default();
+        let now = Instant::now();
+        for i in 0..5u16 {
+            let ip = std::net::IpAddr::V6(std::net::Ipv6Addr::new(0xfd00, 1, 2, 3, i, 7, 7, i));
+            let _ = t.fail(ip, now);
+        }
+        assert!(t.blocked("fd00:1:2:3:dead:beef::1".parse().unwrap(), now), "rotating inside a /64 doesn't help");
+        assert!(!t.blocked("fd00:1:2:4::1".parse().unwrap(), now), "another /64 is another host");
+
+        let g = Throttle::default();
+        for i in 0..30u8 {
+            let _ = g.fail(std::net::IpAddr::V4(std::net::Ipv4Addr::new(10, 0, i, 1)), now);
+        }
+        assert!(g.blocked("192.168.9.9".parse().unwrap(), now), "global cap");
+        assert!(!g.blocked("192.168.9.9".parse().unwrap(), now + Duration::from_secs(61)));
     }
 }

@@ -93,6 +93,12 @@ impl PasteGuard {
         out
     }
 
+    /// Stop treating the held paste key as held (its release may never reach us,
+    /// e.g. control moved to another computer). Modifier tracking is kept.
+    pub fn release_held(&mut self) {
+        self.held = None;
+    }
+
     /// Forget held state (link dropped, focus moved).
     pub fn reset(&mut self) {
         self.pressed = Pressed::default();
