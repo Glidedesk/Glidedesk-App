@@ -169,3 +169,13 @@ Known gaps (v4): still no real Windows device test from this Mac; the lab covers
 - [x] Lab: client-a restarted with SIGTERM and SIGKILL, server untouched — cursor, pointer
       motion and clipboard work every time; browser QA: offer banner and "Get them now" disappear,
       Activity says why, client back Online. macOS cross-check not run (no SDK on this Linux host).
+
+### OS matrix on GitHub's free runners
+- [x] `.github/workflows/os-matrix.yml`: Linux x64, Windows x64 (windows-2025) and macOS ARM64
+      (macos-15) each run native clippy, all tests, the app build and `scripts/os-smoke.sh`
+      (real server + client agents over loopback: connect, graceful client restart, killed
+      client + restart, self-test). Push to main (code changes) or Actions → OS matrix → Run
+      (macOS optional, 10× minutes). `make os-smoke` runs the smoke test locally (Linux/Xvfb).
+- [x] First native run found 2 test assumptions on macOS (⌘V paste; IPC probe accept error)
+      and xtask not building on Windows (excluded, as in ci.yml) — fixed; run 36149212960 green:
+      Linux 137, Windows 134, macOS 138 tests; smoke PASSED on all three.
