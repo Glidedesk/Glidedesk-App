@@ -196,3 +196,16 @@ Known gaps (v4): still no real Windows device test from this Mac; the lab covers
 - [x] Fix (`crates/input/src/pin.rs`, used by the macOS tap): pulled back as soon as it drifts
       40 pt; the event after a warp is measured from the warp target, events queued before it keep
       their own delta, so frequent pulls lose no motion. 6 unit tests (run on every OS in CI).
+
+### Fix: extra mouse buttons / copy-paste acted on the Mac while a client had control
+- [x] Root cause (proven on the macOS CI runner with a real event tap: red test first):
+      mouse utilities (Logi Options+, SteerMouse, …) read extra buttons themselves and post
+      what they are set to — ⌘C/⌘V, other shortcuts, scrolls, clicks — at the session level,
+      after our HID tap, so it never saw them and they acted on the Mac. Media / special keys
+      (system-defined events) were not in the tap mask at all. Buttons 6+ were sent as middle.
+- [x] Fix (`crates/input/src/macos.rs`): a second active tap at the annotated-session level
+      forwards + swallows everything software posts while grabbed (the HID tap marks the key
+      releases it lets through on purpose); system-defined media keys decoded
+      (`keymap::mac_aux_key`) and forwarded; buttons 6+ swallowed, not sent as middle.
+      Real-tap tests on macOS CI (`GLIDEDESK_TAP_TESTS`): posted ⌘C and volume-up reach the client.
+      Limit: actions a utility performs through a private system API (not as events) can't be caught.

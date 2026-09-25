@@ -171,6 +171,34 @@ pub fn mac_to_hid(code: u16) -> Option<KeyCode> {
     (v != NONE).then_some(KeyCode(v))
 }
 
+/// A macOS media / special key: the `data1` of a system-defined event with
+/// subtype 8 (`NX_SUBTYPE_AUX_CONTROL_BUTTONS`) → key and "pressed". These keys
+/// (volume, play, brightness, …) never arrive as key events; mouse utilities
+/// also send them for buttons set to such actions. Repeats count as presses.
+#[must_use]
+pub fn mac_aux_key(data1: i64) -> Option<(KeyCode, bool)> {
+    let nx = (data1 >> 16) & 0xFFFF;
+    let down = match (data1 >> 8) & 0xFF {
+        0x0A => true,
+        0x0B => false,
+        _ => return None,
+    };
+    // NX_KEYTYPE_* from IOKit's ev_keymap.h.
+    let key = match nx {
+        0 => hid::VOLUME_UP,
+        1 => hid::VOLUME_DOWN,
+        2 => media::BRIGHTNESS_UP,
+        3 => media::BRIGHTNESS_DOWN,
+        7 => hid::MUTE,
+        14 => media::EJECT,
+        16 => media::PLAY_PAUSE,
+        17 | 19 => media::NEXT,
+        18 | 20 => media::PREV,
+        _ => return None,
+    };
+    Some((KeyCode(key), down))
+}
+
 /// HID → Windows scancode (`EXT` flag for `0xE0`-prefixed keys).
 #[must_use]
 pub fn hid_to_win(k: KeyCode) -> Option<u16> {
@@ -298,6 +326,20 @@ pub const fn is_modifier(k: KeyCode) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mac_media_keys_decode_from_system_defined_events() {
+        // data1 = key << 16 | state << 8 (0x0A down, 0x0B up) | repeat.
+        let ev = |nx: i64, state: i64| (nx << 16) | (state << 8);
+        assert_eq!(mac_aux_key(ev(0, 0x0A)), Some((KeyCode(hid::VOLUME_UP), true)));
+        assert_eq!(mac_aux_key(ev(1, 0x0B)), Some((KeyCode(hid::VOLUME_DOWN), false)));
+        assert_eq!(mac_aux_key(ev(7, 0x0A)), Some((KeyCode(hid::MUTE), true)));
+        assert_eq!(mac_aux_key(ev(16, 0x0A) | 1), Some((KeyCode(media::PLAY_PAUSE), true)), "repeat");
+        assert_eq!(mac_aux_key(ev(17, 0x0A)), Some((KeyCode(media::NEXT), true)));
+        assert_eq!(mac_aux_key(ev(20, 0x0B)), Some((KeyCode(media::PREV), false)));
+        assert_eq!(mac_aux_key(ev(21, 0x0A)), None, "keyboard backlight: not forwarded");
+        assert_eq!(mac_aux_key(ev(0, 0x00)), None, "not a press or release");
+    }
 
     #[test]
     fn hid_codes_are_unique() {

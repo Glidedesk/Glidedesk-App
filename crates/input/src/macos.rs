@@ -247,6 +247,9 @@ struct Shared {
     tx: mpsc::Sender<CaptureEvent>,
     run_loop: OnceLock<SendRunLoop>,
     tap: OnceLock<SendPort>,
+    /// Second tap, after the HID one: catches what other software posts itself
+    /// (see `session_callback`).
+    session_tap: OnceLock<SendPort>,
     pin: Mutex<Point>,
     /// Our last warp, until its first motion event is seen: that event's delta
     /// fields include the jump itself, so it is measured from the warp target
@@ -386,7 +389,17 @@ fn modifier_bit(mac_code: u16) -> Option<u64> {
     })
 }
 
-#[allow(clippy::cast_possible_truncation)]
+/// `NSEventTypeSystemDefined`: media / special keys (volume, play, brightness,
+/// …) and the actions mouse utilities give extra buttons. Never key events.
+const SYSTEM_DEFINED: u32 = 14;
+/// Its subtype for media / special keys (`NX_SUBTYPE_AUX_CONTROL_BUTTONS`).
+const AUX_CONTROL_BUTTONS: i16 = 8;
+
+/// Put on events the HID tap lets through while grabbed (key releases of keys
+/// held before the grab), so the session tap lets them through as well.
+const PASSED_MARK: i64 = 0x676C_6964; // "glid"
+
+/// The HID tap: every real keyboard / mouse event, before anything else.
 unsafe extern "C-unwind" fn tap_callback(
     _proxy: CGEventTapProxy,
     ty: CGEventType,
@@ -394,20 +407,73 @@ unsafe extern "C-unwind" fn tap_callback(
     user: *mut c_void,
 ) -> *mut CGEvent {
     // SAFETY: `user` is the `Arc<Shared>` pointer kept alive by the capture
-    // thread for as long as the tap exists.
+    // thread for as long as the taps exist.
     let shared = unsafe { &*(user as *const Shared) };
     // SAFETY: the event pointer is valid for the duration of the callback.
     let ev = unsafe { event.as_ref() };
     let pass = event.as_ptr();
-
-    if ty == CGEventType::TapDisabledByTimeout || ty == CGEventType::TapDisabledByUserInput {
-        if let Some(tap) = shared.tap.get() {
-            CGEvent::tap_enable(&tap.0, true);
-        }
-        shared.emit(CaptureEvent::Interrupted);
+    if tap_disabled(shared, ty) {
         return pass;
     }
+    let out = handle(shared, ty, ev, pass);
+    if !out.is_null() && shared.grabbed.load(Ordering::Relaxed) {
+        CGEvent::set_integer_value_field(Some(ev), CGEventField::EventSourceUserData, PASSED_MARK);
+    }
+    out
+}
 
+/// The session tap. Mouse utilities (Logi Options+, `SteerMouse`, `BetterTouchTool`,
+/// …) read extra buttons themselves and post what they are set to — a shortcut
+/// like ⌘C, a scroll, a click — past the HID tap. While grabbed, the HID tap
+/// already swallowed every real event, so anything else arriving here was posted
+/// by software: it belongs to the client too, not to this Mac.
+unsafe extern "C-unwind" fn session_callback(
+    _proxy: CGEventTapProxy,
+    ty: CGEventType,
+    event: NonNull<CGEvent>,
+    user: *mut c_void,
+) -> *mut CGEvent {
+    // SAFETY: as in `tap_callback`.
+    let shared = unsafe { &*(user as *const Shared) };
+    // SAFETY: the event pointer is valid for the duration of the callback.
+    let ev = unsafe { event.as_ref() };
+    let pass = event.as_ptr();
+    if tap_disabled(shared, ty) || !shared.grabbed.load(Ordering::Relaxed) {
+        return pass;
+    }
+    if CGEvent::integer_value_field(Some(ev), CGEventField::EventSourceUserData) == PASSED_MARK {
+        return pass;
+    }
+    handle(shared, ty, ev, pass)
+}
+
+/// macOS turns a tap off when it is too slow or on user input: turn both back on.
+fn tap_disabled(shared: &Shared, ty: CGEventType) -> bool {
+    if ty != CGEventType::TapDisabledByTimeout && ty != CGEventType::TapDisabledByUserInput {
+        return false;
+    }
+    for tap in [shared.tap.get(), shared.session_tap.get()].into_iter().flatten() {
+        CGEvent::tap_enable(&tap.0, true);
+    }
+    shared.emit(CaptureEvent::Interrupted);
+    true
+}
+
+/// Media / special key of a system-defined event, if it is one.
+fn aux_key(ev: &CGEvent) -> Option<(KeyCode, bool)> {
+    objc2::rc::autoreleasepool(|_| {
+        let ns = objc2_app_kit::NSEvent::eventWithCGEvent(ev)?;
+        if ns.subtype().0 != AUX_CONTROL_BUTTONS {
+            return None;
+        }
+        keymap::mac_aux_key(i64::try_from(ns.data1()).ok()?)
+    })
+}
+
+/// Turns one local event into capture events; returns `pass` to let it through
+/// to this Mac, or null to swallow it (everything, while grabbed).
+#[allow(clippy::cast_possible_truncation)]
+fn handle(shared: &Shared, ty: CGEventType, ev: &CGEvent, pass: *mut CGEvent) -> *mut CGEvent {
     let field = |f: CGEventField| CGEvent::integer_value_field(Some(ev), f);
     match ty {
         CGEventType::MouseMoved
@@ -446,12 +512,17 @@ unsafe extern "C-unwind" fn tap_callback(
             shared.emit(CaptureEvent::Button { button: MouseButton::Right, down: ty == CGEventType::RightMouseDown });
         }
         CGEventType::OtherMouseDown | CGEventType::OtherMouseUp => {
+            // Buttons 6 and up have no counterpart on the other computer: swallowed
+            // while grabbed, but not sent as a middle click (as they used to be).
             let button = match field(CGEventField::MouseEventButtonNumber) {
-                3 => MouseButton::Back,
-                4 => MouseButton::Forward,
-                _ => MouseButton::Middle,
+                2 => Some(MouseButton::Middle),
+                3 => Some(MouseButton::Back),
+                4 => Some(MouseButton::Forward),
+                _ => None,
             };
-            shared.emit(CaptureEvent::Button { button, down: ty == CGEventType::OtherMouseDown });
+            if let Some(button) = button {
+                shared.emit(CaptureEvent::Button { button, down: ty == CGEventType::OtherMouseDown });
+            }
         }
         CGEventType::ScrollWheel => {
             let continuous = field(CGEventField::ScrollWheelEventIsContinuous) != 0;
@@ -499,6 +570,14 @@ unsafe extern "C-unwind" fn tap_callback(
                 return if shared.gate.on_key(key, down, grabbed).swallow { std::ptr::null_mut() } else { pass };
             }
         }
+        // Media / special keys go to the computer that has control.
+        t if t.0 == SYSTEM_DEFINED => {
+            if shared.grabbed.load(Ordering::Relaxed)
+                && let Some((key, down)) = aux_key(ev)
+            {
+                shared.emit(CaptureEvent::Key { key, down });
+            }
+        }
         // Trackpad gestures, Force Touch pressure and tablet events must not act on
         // this Mac (e.g. swipe between spaces) while another computer has control.
         t if GRAB_ONLY.contains(&t.0) => {}
@@ -518,6 +597,7 @@ pub fn start_capture() -> Result<Capture, InputError> {
         tx,
         run_loop: OnceLock::new(),
         tap: OnceLock::new(),
+        session_tap: OnceLock::new(),
         pin: Mutex::new(Point::default()),
         warped: Mutex::new(None),
         last_flags: Mutex::new(0),
@@ -529,6 +609,7 @@ pub fn start_capture() -> Result<Capture, InputError> {
         .name("gd-capture".into())
         .spawn(move || {
             let events = GRAB_ONLY.iter().fold(0u64, |m, t| m | (1u64 << t))
+                | (1u64 << SYSTEM_DEFINED)
                 | mask(&[
                     CGEventType::MouseMoved,
                     CGEventType::LeftMouseDown,
@@ -579,6 +660,30 @@ pub fn start_capture() -> Result<Capture, InputError> {
             // SAFETY: kCFRunLoopCommonModes is a valid static CF string.
             rl.add_source(Some(&source), unsafe { kCFRunLoopCommonModes });
             CGEvent::tap_enable(&tap, true);
+            // SAFETY: as for the HID tap; same `user`, released after both taps.
+            let session = unsafe {
+                CGEvent::tap_create(
+                    CGEventTapLocation::AnnotatedSessionEventTap,
+                    CGEventTapPlacement::HeadInsertEventTap,
+                    CGEventTapOptions::Default,
+                    events,
+                    Some(session_callback),
+                    user,
+                )
+            };
+            match session.as_ref().and_then(|t| CFMachPort::new_run_loop_source(None, Some(t), 0)) {
+                Some(src) => {
+                    // SAFETY: as above.
+                    rl.add_source(Some(&src), unsafe { kCFRunLoopCommonModes });
+                }
+                None => warn!(
+                    "session event tap unavailable: buttons that mouse software turns into shortcuts stay on this Mac"
+                ),
+            }
+            if let Some(t) = &session {
+                CGEvent::tap_enable(t, true);
+                let _ = thread_shared.session_tap.set(SendPort(t.clone()));
+            }
             let _ = thread_shared.run_loop.set(SendRunLoop(rl));
             let _ = thread_shared.tap.set(SendPort(tap.clone()));
             let _ = ready_tx.send(Ok(()));
@@ -587,7 +692,11 @@ pub fn start_capture() -> Result<Capture, InputError> {
             }
             CGEvent::tap_enable(&tap, false);
             tap.invalidate();
-            // SAFETY: the tap is disabled and invalidated; no more callbacks.
+            if let Some(t) = &session {
+                CGEvent::tap_enable(t, false);
+                t.invalidate();
+            }
+            // SAFETY: both taps are disabled and invalidated; no more callbacks.
             drop(unsafe { Arc::from_raw(user as *const Shared) });
             debug!("capture thread stopped");
         })
@@ -919,5 +1028,41 @@ mod tests {
         cap.control.set_grab(false);
         cap.control.stop();
         assert!(got, "a shortcut posted by mouse software was not sent to the client (it acts on this Mac)");
+    }
+
+    /// A media / special key: a system-defined event, not a key event.
+    fn post_media(nx_key: i64, down: bool) {
+        let state: i64 = if down { 0x0A } else { 0x0B };
+        let data1 = isize::try_from((nx_key << 16) | (state << 8)).expect("data1");
+        let ns = objc2_app_kit::NSEvent::otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2(
+            objc2_app_kit::NSEventType::SystemDefined,
+            CGPoint { x: 0.0, y: 0.0 },
+            objc2_app_kit::NSEventModifierFlags(0),
+            0.0,
+            0,
+            None,
+            AUX_CONTROL_BUTTONS,
+            data1,
+            -1,
+        )
+        .expect("system-defined event");
+        let ev = ns.CGEvent().expect("its CGEvent");
+        CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&ev));
+    }
+
+    #[test]
+    fn media_keys_go_to_the_client_while_grabbed() {
+        if !enabled() {
+            return;
+        }
+        let mut cap = start_capture().expect("event tap (Accessibility)");
+        cap.control.set_grab(true);
+        std::thread::sleep(Duration::from_millis(200));
+        post_media(0, true); // NX_KEYTYPE_SOUND_UP
+        post_media(0, false);
+        let got = saw_key(&mut cap.events, KeyCode(hid::VOLUME_UP));
+        cap.control.set_grab(false);
+        cap.control.stop();
+        assert!(got, "volume up was not sent to the client (it acts on this Mac)");
     }
 }
