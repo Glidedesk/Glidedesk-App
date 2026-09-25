@@ -133,7 +133,11 @@ To do:
       B3 connect by computer name (mDNS name/host match, .local, DNS).
 - [x] Phase 19: B9/B10 files move only on paste (offer → held paste → fetch → replay), relay
       across 3 computers, free-space check, "Get … now" in tray/window.
-- [ ] Phase 20: reviews, release build, GitHub CI/Release green, Graphify.
+- [x] Phase 20: ECC security/Rust/React reviews — 7 findings fixed (fetch size cap, IPv6 + global
+      password throttle, stuck paste key, cancel-safe frame reads, 3 UI config races/a11y);
+      121 Rust + 6 UI tests; signed release in output-build/ (checksums, minisign, Authenticode
+      timestamp, macOS "Glidedesk Code Signing" verified); GitHub CI and Release green, Nightly
+      pre-release published; Graphify refreshed (2510 nodes).
 Known gaps (v3): no real Windows/Linux device test from this Mac; Windows virtual-file paste
 (Explorer's own network progress) not implemented — files arrive first, then Explorer copies
 them from staging; macOS Finder has no "cut" so cut only applies to Windows sources.
