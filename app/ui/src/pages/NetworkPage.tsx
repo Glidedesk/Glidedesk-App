@@ -1,0 +1,227 @@
+import { useEffect, useState } from "react";
+import { api, errorText } from "../lib/api";
+import type { AgentStatus, Config, NetInterface } from "../lib/types";
+import { useToast } from "../lib/toast";
+import { Badge, Button, Callout, NumberInput, Page, Row, Section, Switch, TextInput } from "../components/ui";
+
+type Update = (m: (c: Config) => void, now?: boolean) => void;
+const KIND = { ethernet: "Ethernet", wifi: "Wi-Fi", vpn: "VPN", loopback: "Loopback", virtual: "Virtual", other: "Other" } as const;
+// IPv4 only: an address or a range like 192.168.1.0/24.
+const CIDR = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}(\/([12]?\d|3[0-2]))?$/;
+
+function ListEditor({ label, values, onChange }: { label: string; values: string[]; onChange: (v: string[]) => void }) {
+  const [text, setText] = useState(values.join("\n"));
+  useEffect(() => setText(values.join("\n")), [values]);
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  const bad = lines.filter((l) => !CIDR.test(l));
+  return (
+    <div className="w-full max-w-72">
+      <textarea
+        aria-label={label}
+        className={`h-20 w-full rounded-lg border bg-panel px-2 py-1 font-mono text-[12.5px] ${bad.length ? "border-bad" : "border-line"}`}
+        placeholder="192.168.1.0/24"
+        value={text}
+        spellCheck={false}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => bad.length === 0 && onChange(lines)}
+      />
+      {bad.length > 0 && <div className="text-[12px] text-bad">Not an address or range: {bad.join(", ")}</div>}
+    </div>
+  );
+}
+
+function PasswordSection({ enabled }: { enabled: boolean }) {
+  const { run } = useToast();
+  const [pw, setPw] = useState("");
+  const [again, setAgain] = useState("");
+  const mismatch = again !== "" && pw !== again;
+  const save = () =>
+    void run(async () => {
+      await api.setServerPassword(pw);
+      setPw("");
+      setAgain("");
+    }, "Password set — computers need it to connect");
+  return (
+    <Section
+      title="Password"
+      description="With a password, a computer can only connect if it knows it. The password never crosses the network, and only a salted hash is kept here."
+    >
+      <Row label="Status">
+        {enabled ? <Badge tone="ok">On</Badge> : <Badge tone="warn">Off — any computer on the network can connect</Badge>}
+      </Row>
+      <Row label={enabled ? "Change password" : "Set a password"} hint="At least 8 characters. Enter the same password on each client (This computer → Server).">
+        <div className="flex flex-col items-end gap-2">
+          <TextInput type="password" autoComplete="new-password" label="New password" value={pw} placeholder="New password" onChange={setPw} />
+          <TextInput
+            type="password"
+            autoComplete="new-password"
+            label="Repeat password"
+            value={again}
+            placeholder="Repeat"
+            invalid={mismatch}
+            describedBy="pw-hint"
+            onChange={setAgain}
+          />
+          <div id="pw-hint" className={`text-[12px] ${mismatch ? "text-bad" : "text-muted"}`} aria-live="polite">
+            {mismatch ? "The passwords don't match." : pw.length > 0 && pw.length < 8 ? "Use at least 8 characters." : ""}
+          </div>
+          <div className="flex gap-2">
+            {enabled && (
+              <Button variant="danger" onClick={() => void run(() => api.setServerPassword(""), "Password removed")}>
+                Remove
+              </Button>
+            )}
+            <Button variant="primary" disabled={pw.length < 8 || pw !== again} onClick={save}>
+              {enabled ? "Change" : "Set password"}
+            </Button>
+          </div>
+        </div>
+      </Row>
+    </Section>
+  );
+}
+
+export function NetworkPage({ status, config, update }: { status: AgentStatus; config: Config; update: Update }) {
+  const [ifaces, setIfaces] = useState<NetInterface[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const net = config.server.network;
+  // Sorted by name: the OS lists interfaces in no fixed order.
+  const refresh = () => api.interfaces().then((l) => setIfaces([...l].sort((a, b) => a.friendly_name.localeCompare(b.friendly_name))), (e) => setError(errorText(e)));
+  useEffect(() => {
+    void refresh();
+  }, []);
+  const isClient = status.role === "client";
+
+  if (isClient) {
+    const chosen = ifaces.find((i) => i.name === config.client.interface);
+    const chosenOff = config.client.interface !== "" && ifaces.length > 0 && (!chosen || !chosen.up);
+    return (
+      <Page title="Network" subtitle="How this computer reaches the server. Glidedesk uses IPv4 only." actions={<Button onClick={() => void refresh()}>Refresh</Button>}>
+        {error && <Callout tone="bad">{error}</Callout>}
+        {chosenOff && (
+          <Callout tone="warn">
+            {chosen ? `${chosen.friendly_name} is off` : `${config.client.interface} is not connected`} — Glidedesk uses any other network until it is back.
+          </Callout>
+        )}
+        <Section title="Interface" description="Leave on Any unless the server must be reached through one specific network. If that network is off, any other one is used.">
+          <Row label="Use interface">
+            <select
+              aria-label="Interface"
+              className="w-full max-w-72 rounded-lg border border-line bg-panel px-2 py-1"
+              value={config.client.interface}
+              onChange={(e) => update((c) => void (c.client.interface = e.target.value), true)}
+            >
+              <option value="">Any</option>
+              {config.client.interface !== "" && !chosen && <option value={config.client.interface}>{config.client.interface} (not connected)</option>}
+              {ifaces
+                .filter((i) => i.kind !== "loopback")
+                .map((i) => (
+                  <option key={i.name} value={i.name}>
+                    {i.friendly_name} ({i.addrs.map((a) => a.ip).join(", ")}){i.up ? "" : " — off"}
+                  </option>
+                ))}
+            </select>
+          </Row>
+        </Section>
+      </Page>
+    );
+  }
+
+  const toggle = (list: string[], v: string, on: boolean) => (on ? [...new Set([...list, v])] : list.filter((x) => x !== v));
+  const netNotes = (status.server?.warnings ?? []).filter((w) => w.startsWith("Network: ")).map((w) => w.slice("Network: ".length));
+  return (
+    <Page title="Network" subtitle="Where this server listens for its computers. Glidedesk uses IPv4 only." actions={<Button onClick={() => void refresh()}>Refresh</Button>}>
+      {error && <Callout tone="bad">{error}</Callout>}
+      {netNotes.map((n) => (
+        <Callout key={n} tone="warn">
+          {n}
+        </Callout>
+      ))}
+      <Section title="Listen on">
+        {(
+          [
+            ["all", "All networks", "Every interface, including ones connected later."],
+            ["interfaces", "Selected interfaces", "Every address of the ticked interfaces (follows DHCP changes)."],
+            ["addresses", "Selected IP addresses", "Only the exact addresses ticked below."],
+          ] as const
+        ).map(([mode, label, hint]) => (
+          <label key={mode} className="flex cursor-pointer items-start gap-3 px-4 py-3">
+            <input type="radio" name="bind" className="mt-1" checked={net.mode === mode} onChange={() => update((c) => void (c.server.network.mode = mode), true)} />
+            <span>
+              <span className="block font-medium">{label}</span>
+              <span className="text-[12.5px] text-muted">{hint}</span>
+            </span>
+          </label>
+        ))}
+      </Section>
+      {net.mode !== "all" && (
+        <Section title={net.mode === "interfaces" ? "Interfaces" : "Addresses"}>
+          {ifaces
+            .filter((i) => i.kind !== "loopback")
+            .map((i) => (
+              <div key={i.name} className="px-4 py-2.5">
+                <label className="flex items-center gap-2 font-medium">
+                  {net.mode === "interfaces" && (
+                    <input
+                      type="checkbox"
+                      checked={net.interfaces.includes(i.name)}
+                      onChange={(e) => update((c) => void (c.server.network.interfaces = toggle(c.server.network.interfaces, i.name, e.target.checked)), true)}
+                    />
+                  )}
+                  {i.friendly_name} <Badge tone="muted">{KIND[i.kind]}</Badge>
+                  {!i.up && <Badge tone="warn">off — skipped until it is back</Badge>}
+                </label>
+                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 pl-6 text-muted">
+                  {i.addrs.map((a) =>
+                    net.mode === "addresses" ? (
+                      <label key={a.ip} className="flex items-center gap-1.5 text-fg">
+                        <input
+                          type="checkbox"
+                          checked={net.addresses.includes(a.ip)}
+                          onChange={(e) => update((c) => void (c.server.network.addresses = toggle(c.server.network.addresses, a.ip, e.target.checked)), true)}
+                        />
+                        <span className="font-mono text-[12.5px]">{a.ip}</span>
+                      </label>
+                    ) : (
+                      <span key={a.ip} className="font-mono text-[12.5px]">
+                        {a.ip}
+                      </span>
+                    ),
+                  )}
+                </div>
+              </div>
+            ))}
+        </Section>
+      )}
+      <Section title="Status" description="Checked every few seconds: a network that goes off is skipped, and used again when it is back.">
+        {(status.server?.bind ?? []).map((b) => (
+          <Row key={b.addr} label={<span className="font-mono">{b.addr}</span>}>
+            {b.error ? <Badge tone="bad">{b.error}</Badge> : <Badge tone="ok">listening</Badge>}
+          </Row>
+        ))}
+        {status.server && status.server.bind.length === 0 && <Row label="Not listening yet" hint="None of the chosen networks is connected." />}
+        {!status.server && <Row label="Not listening" hint="Sharing is stopped or this computer is not the server." />}
+      </Section>
+      <Section title="Port & discovery">
+        <Row label="Port" hint="UDP. Change only if another program uses it.">
+          <NumberInput label="Port" value={net.port} min={1024} max={65535} width="w-28" onChange={(v) => update((c) => void (c.server.network.port = v))} />
+        </Row>
+        <Row label="Announce on the network" hint="Lets clients find this server automatically (mDNS), only on the interfaces above.">
+          <Switch label="Discovery" checked={net.discovery} onChange={(v) => update((c) => void (c.server.network.discovery = v), true)} />
+        </Row>
+      </Section>
+      <PasswordSection enabled={net.password != null} />
+      <Section title="Who may connect" description="Limit which addresses may connect at all (checked before the password).">
+        <Row label="Same subnet only" hint="Only computers on the same local network segment.">
+          <Switch label="Same subnet only" checked={net.same_subnet_only} onChange={(v) => update((c) => void (c.server.network.same_subnet_only = v), true)} />
+        </Row>
+        <Row label="Allow only" hint="One address or range per line. Empty = everyone.">
+          <ListEditor label="Allow list" values={net.allow_list} onChange={(v) => update((c) => void (c.server.network.allow_list = v), true)} />
+        </Row>
+        <Row label="Block" hint="Always refused.">
+          <ListEditor label="Block list" values={net.block_list} onChange={(v) => update((c) => void (c.server.network.block_list = v), true)} />
+        </Row>
+      </Section>
+    </Page>
+  );
+}

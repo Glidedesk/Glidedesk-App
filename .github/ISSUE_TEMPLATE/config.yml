@@ -1,0 +1,3 @@
+# Security problems are reported privately: GitHub shows "Report a vulnerability"
+# in the issue chooser (see SECURITY.md).
+blank_issues_enabled: false

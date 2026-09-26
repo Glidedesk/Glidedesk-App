@@ -1,0 +1,20 @@
+#!/bin/sh
+# clang wrapper for macOS cross-compilation (compiler + linker driver).
+# Picks the architecture from -arch / --target, points clang at the host SDK
+# mounted at $MACOS_SDK and links with ld64.lld.
+set -eu
+sdk="${MACOS_SDK:-/opt/macos-sdk}"
+[ -d "$sdk/usr/lib" ] || { echo "gd-macos-cc: macOS SDK not mounted at $sdk (run 'make sdk')" >&2; exit 2; }
+arch=arm64
+prev=
+for a in "$@"; do
+  case "$prev" in -arch) arch="$a" ;; esac
+  case "$a" in
+    --target=x86_64-*|-target=x86_64-*) arch=x86_64 ;;
+    --target=aarch64-*|--target=arm64-*) arch=arm64 ;;
+  esac
+  prev="$a"
+done
+case "$arch" in aarch64) arch=arm64 ;; esac
+exec "${GD_CLANG:-clang}" --target="${arch}-apple-macos${MACOSX_DEPLOYMENT_TARGET:-13.0}" \
+  -isysroot "$sdk" -fuse-ld=lld -Wno-unused-command-line-argument "$@"

@@ -1,0 +1,34 @@
+[package]
+name = "glidedesk-net"
+description = "QUIC transport, interface binding and discovery"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
+getrandom.workspace = true
+hmac = "0.12"
+sha2 = "0.10"
+spake2 = "0.4"
+blake3.workspace = true
+glidedesk-proto.workspace = true
+glidedesk-config.workspace = true
+mdns-sd.workspace = true
+netdev.workspace = true
+quinn.workspace = true
+rcgen.workspace = true
+rustls.workspace = true
+serde.workspace = true
+socket2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Glidedesk
+GenericName=Keyboard and mouse sharing
+Comment=One keyboard and mouse for all your computers
+Exec=glidedesk
+Icon=glidedesk
+Terminal=false
+Categories=Utility;Network;
+Keywords=kvm;mouse;keyboard;share;clipboard;
+StartupNotify=false

@@ -1,0 +1,43 @@
+[package]
+name = "glidedesk-input"
+description = "Keyboard/mouse capture and injection, displays, permissions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+glidedesk-config.workspace = true
+glidedesk-layout.workspace = true
+glidedesk-proto.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.4"
+objc2-core-foundation = { version = "0.3.2", features = ["CFRunLoop", "CFMachPort", "CFString", "CFNumber", "CFBase", "CFCGTypes", "CFArray", "CFDictionary"] }
+objc2-core-graphics = { version = "0.3.2", features = ["CGEvent", "CGEventTypes", "CGEventSource", "CGDirectDisplay", "CGDisplayConfiguration", "CGRemoteOperation", "CGError", "CGWindow", "CGGeometry"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "libc", "NSWorkspace", "NSRunningApplication", "NSEvent", "NSGraphicsContext", "objc2-core-graphics"] }
+objc2-foundation = { version = "0.3.2", features = ["NSURL", "NSString", "NSValue", "NSDictionary", "NSUserDefaults"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Threading",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+evdev = "0.13"
+x11rb = { version = "0.14", features = ["xinput", "xtest", "randr", "xfixes"] }
+
+[lints]
+workspace = true
