@@ -3,8 +3,16 @@
 - Plan: `PLAN.md` (source of truth). Progress: `docs/PROGRESS.md`.
 - Knowledge graph: `graphify-out/` — query it first (`graphify query "..."`), update after each phase
   (`graphify extract . --backend claude-cli && graphify cluster-only . --backend=claude-cli`).
-- **Never build or test on the host.** Everything runs in Docker: `make lint`, `make test-rust`,
-  `make check-cross`, `make build-win`, `make build-mac`, `make release`, or `docker/run.sh <cmd>`.
+- **Never build or test on the host.** Everything runs in Docker: `scripts/local-ci.sh` (= `make ci`:
+  tests → real agents → installers for every platform), or single steps with `make lint`,
+  `make test-rust`, `make check-cross`, `make build-win`, `make build-mac`, `docker/run.sh <cmd>`.
+  (`make` isn't installed on this Linux host: call the script / `docker/run.sh` directly.)
+- **Public repo** (MIT OR Apache-2.0). GitHub Actions run publicly: `ci.yml` (tests on Linux,
+  Windows, macOS → required check "CI passed"), `release.yml` (called by CI: Nightly/tags),
+  CodeQL, Scorecard, dependency review, daily audit. Keep them hardened: actions pinned to SHAs,
+  `permissions: {}` + per-job minimum, no secrets outside the `release` environment, no caches in
+  release builds, lint with actionlint + zizmor. Still run `scripts/local-ci.sh test` before pushing.
+- Never commit secrets, personal data or machine names; `.signing/` stays private.
 - Output installers go to `output-build/`.
 - macOS SDK comes from `make sdk` (copied to `~/.cache/glidedesk/macos-sdk`, never committed).
 - Rust: edition 2024, `clippy -D warnings` with pedantic, no `unwrap`/`expect` outside tests,

@@ -788,7 +788,7 @@ Run on real hardware (VMs only where noted) after each phase, using the installe
 1. **Name** — Glidedesk.
 2. **Signing** — no paid certificates; first-run security warnings are fine (private app).
 3. **OS support** — macOS 13+, Windows 10 22H2 / 11, Windows Server 2016 or later.
-4. **Licence** — private, closed source; no public package managers (Homebrew/winget dropped).
+4. **Licence** — ~~private, closed source~~ → **open source, MIT OR Apache-2.0** (public repo since 2026-09-26); no public package managers yet (Homebrew/winget dropped).
 5. **Servers** — one server with many clients; no multi-server profiles.
 
 ---
@@ -811,7 +811,7 @@ New requirements:
 | R27 | **One app** — no separate agent program; the same app is server or client |
 | R28 | Find and fix all bugs and vulnerabilities; update both apps |
 | R29 | Signed without any paid account |
-| R30 | GitHub Actions: build, test and publish releases on push, within free private-repo limits |
+| R30 | GitHub Actions on the public repo (free hosted runners) + the same pipeline locally in Docker (`scripts/local-ci.sh`) |
 
 ### 13.1 Decisions
 
@@ -842,17 +842,18 @@ Each starts the app with `--background` (tray only, no window).
 | Linux | `SHA256SUMS` signed with **minisign** (public key in the repo) | Anyone can verify downloads |
 `scripts/generate-signing-keys.sh` creates all three keys once. Nothing secret is ever committed.
 
-**CI within the free limits (R30).** 2,000 minutes/month; Linux counts 1×, Windows 2×, macOS 10×. Everything that can run on Linux does:
-| Trigger | Jobs (runner) | Est. billed minutes |
-|---|---|---|
-| Any push / PR | Lint + tests + UI tests + Windows cross-check (Linux x64) | ~12 |
-| Push to `main` | + Windows x64 installer (cross-built on Linux), Linux x64 packages, Linux ARM64 packages (ARM runner) → **"Nightly" pre-release** (replaced each time) | ~35 |
-| Tag `v*` (or manual run) | + **macOS ARM64** (macOS runner, only here) → full **Release** with every file | ~120 |
-- Caches cover cargo, pnpm and WebView2.
-- `concurrency` cancels superseded runs.
-- Docs-only changes skip the build.
-- Workflow artifacts are kept for 1 day to respect the 500 MB storage limit; release files don't count toward it.
-- A normal month (≈30 pushes, 2 releases) uses about 1,300 of the 2,000 minutes.
+**Public repo, public CI (R30, 2026-09-26).** The repository is public (MIT OR Apache-2.0), so
+GitHub's hosted runners are free, macOS included. `ci.yml` tests every pull request and every push
+to main natively on Linux x64, Windows x64 and macOS ARM64 (UI, rustfmt, cargo-deny, clippy, every
+Rust test, the Mac's real event-tap tests, real server/client agents); one required check
+("CI passed") gates merging. Only after it is green does a push to main publish "Nightly" and a
+v* tag a release (`release.yml`: macOS ARM64, Windows x64, Linux x64/ARM64, signed `SHA256SUMS`,
+build-provenance attestations). Hardening for public runs: read-only token by default, every action
+pinned to a commit SHA, no secrets for pull requests or forks (outside contributors' runs need
+approval), signing keys only in the `release` environment (main and v* tags), no caches in release
+builds, downloaded tools pinned by SHA-256. CodeQL, Scorecard, dependency review, a daily RustSec
+audit and Dependabot run alongside. The same pipeline also runs locally in Docker —
+`scripts/local-ci.sh` (`make ci`) — to check before pushing.
 
 The macOS build must run on a Mac runner: Apple's SDK licence forbids it on Linux hosts.
 

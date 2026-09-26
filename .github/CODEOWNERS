@@ -1,0 +1,6 @@
+# Every change needs the maintainer's review; CI, release and signing most of all.
+*                 @soykot360
+/.github/         @soykot360
+/signing/         @soykot360
+/installer/       @soykot360
+/docker/          @soykot360

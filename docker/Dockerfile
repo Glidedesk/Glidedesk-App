@@ -69,11 +69,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev \
         osslsigncode minisign file openssl \
     && rm -rf /var/lib/apt/lists/*
+# nfpm: pinned version, checked against its published SHA-256 (same as CI).
+ARG NFPM_VERSION=2.47.0
+ARG NFPM_SHA256_X86_64=0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783
+ARG NFPM_SHA256_ARM64=1c0f5f2999b9a974bfb04fdb0cc3306096de530ac5dbb25d739cc5f5219c919c
 RUN set -eux; \
-    case "$(dpkg --print-architecture)" in amd64) a=x86_64;; arm64) a=arm64;; *) exit 1;; esac; \
-    url="$(curl -fsSL https://api.github.com/repos/goreleaser/nfpm/releases/latest \
-          | jq -r --arg a "$a" '.assets[].browser_download_url | select(test("Linux_" + $a + "\\.tar\\.gz$"))')"; \
-    curl -fsSL "$url" | tar -xz -C /usr/local/bin nfpm; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) a=x86_64; sum="$NFPM_SHA256_X86_64";; arm64) a=arm64; sum="$NFPM_SHA256_ARM64";; *) exit 1;; esac; \
+    f="nfpm_${NFPM_VERSION}_Linux_${a}.tar.gz"; \
+    curl -fsSLo "/tmp/$f" "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/$f"; \
+    echo "$sum  /tmp/$f" | sha256sum -c -; \
+    tar -xzf "/tmp/$f" -C /usr/local/bin nfpm; \
+    rm -f "/tmp/$f"; \
     nfpm --version
 
 # ---- cross-compile configuration ------------------------------------------

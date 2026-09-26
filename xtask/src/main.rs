@@ -211,7 +211,7 @@ fn info_plist(version: &str) -> String {
   <string>Glidedesk connects to your other computers on the local network to share the keyboard, mouse and clipboard.</string>
   <key>NSBonjourServices</key>
   <array><string>_glidedesk._udp</string></array>
-  <key>NSHumanReadableCopyright</key><string>Private software.</string>
+  <key>NSHumanReadableCopyright</key><string>Licensed under MIT OR Apache-2.0.</string>
 </dict>
 </plist>
 "#
@@ -405,7 +405,7 @@ description: |
   the screen and it continues on the next computer; the clipboard and copied
   files follow it.
 homepage: https://glidedesk.invalid
-license: Proprietary
+license: MIT OR Apache-2.0
 contents:
   - src: {s}/glidedesk
     dst: /usr/bin/glidedesk

@@ -1,5 +1,10 @@
 # Glidedesk
 
+[![CI](https://github.com/soykot360/glidedesk/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/soykot360/glidedesk/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/soykot360/glidedesk/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/soykot360/glidedesk/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/soykot360/glidedesk/badge)](https://scorecard.dev/viewer/?uri=github.com/soykot360/glidedesk)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+
 One keyboard and mouse for your Mac, Windows and Linux computers. Move the cursor off
 the edge of the screen and it continues on the next computer; the clipboard and copied
 files follow it. One app — every computer can be the server or a client.
@@ -80,16 +85,39 @@ make test           # lint + all tests + macOS/Windows cross-checks + UI tests
 make release        # macOS arm64 + Windows x64 + Linux (this machine's arch) → output-build/
 ```
 
-## GitHub Actions
+## CI and releases
 
-- **Every push / pull request:** lint, tests, UI tests, Windows cross-check (`ci.yml`).
-- **Push to `main`:** macOS + Windows x64 + Linux x64/arm64 installers → **Nightly** pre-release.
-- **Tag `vX.Y.Z`:** the same → a normal release with every file, checksums and signature:
-  `git tag v0.2.0 && git push --tags`.
+Every pull request and every push to `main` is tested on GitHub's hosted runners — Linux x64,
+Windows x64 and macOS ARM64, natively: UI typecheck/tests/build, rustfmt, clippy, `cargo deny`
+(advisories, licences, sources), every Rust test (on the Mac also the real event-tap tests) and
+real server + client agents (connect, client restarts, self-test). A pull request can be merged
+only when the **CI passed** check is green.
 
-GitHub Free private repos get 2,000 minutes/month; Linux counts 1×, macOS 10×. One code push
-to `main` costs about 170 billed minutes (CI ≈ 12, Windows/Linux ≈ 35, macOS ≈ 120), so about
-ten releases a month fit; docs-only pushes cost nothing, and a push to another branch runs only
-CI (≈ 12). The four secrets from `.signing/github-secrets.env` sign CI builds (already set).
+Only then does a push to `main` publish the **Nightly** pre-release, and a `v*` tag a release:
+macOS Apple Silicon, Windows x64, Linux x64 and ARM64, with a signed `SHA256SUMS` and a build
+provenance attestation for every file. CodeQL, OpenSSF Scorecard, dependency review, a daily
+RustSec audit and Dependabot run alongside.
+
+The same pipeline runs locally in Docker, to check before you push:
+
+```sh
+scripts/local-ci.sh            # or: make ci — test → real agents → installers for every platform
+scripts/local-ci.sh test       # only the tests
+scripts/local-ci.sh package    # only the installers (output-build/)
+```
+
+The macOS app needs the macOS SDK, which Apple allows only on Apple hardware: locally, run
+`make sdk` and `scripts/local-ci.sh` on a Mac to include it; elsewhere it is reported as skipped.
+
+## Contributing, security, licence
+
+- Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
+  [Code of Conduct](CODE_OF_CONDUCT.md).
+- Report security problems privately — see [SECURITY.md](SECURITY.md).
+
+<a id="license"></a>Glidedesk is licensed under either of [Apache License 2.0](LICENSE-APACHE) or
+[MIT License](LICENSE-MIT), at your option. Unless you explicitly state otherwise, any
+contribution intentionally submitted for inclusion in Glidedesk by you, as defined in the
+Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
 
 Docs: `PLAN.md` (design), `docs/PROGRESS.md` (status), `docs/TESTING.md` (real-device checklist).

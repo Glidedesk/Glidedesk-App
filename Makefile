@@ -5,9 +5,10 @@ RUN := docker/run.sh
 IMAGE := glidedesk-builder:latest
 CROSS_TARGETS := aarch64-apple-darwin x86_64-pc-windows-msvc
 
-.PHONY: help signing-keys docker-image sdk shell fmt lint test test-rust test-ui check-cross build-win build-mac build-linux release clean lab lab-stop os-smoke
+.PHONY: help ci signing-keys docker-image sdk shell fmt lint test test-rust test-ui check-cross build-win build-mac build-linux release clean lab lab-stop os-smoke
 
 help:
+	@echo "make ci            the whole pipeline: tests -> real agents -> installers for every platform"
 	@echo "make docker-image  build the builder image"
 	@echo "make sdk           copy the macOS SDK from this Mac (needed for macOS builds)"
 	@echo "make test          fmt + clippy + all tests + cross-target checks (in Docker)"
@@ -16,6 +17,10 @@ help:
 	@echo "make build-linux   Linux .deb/.rpm/.tar.gz (this arch) -> output-build/"
 	@echo "make release       everything                      -> output-build/"
 	@echo "make shell         interactive shell in the builder"
+
+# The CI pipeline, run locally in Docker (the same steps as GitHub Actions): see scripts/local-ci.sh.
+ci:
+	scripts/local-ci.sh
 
 docker-image:
 	docker build -f docker/Dockerfile -t $(IMAGE) .
