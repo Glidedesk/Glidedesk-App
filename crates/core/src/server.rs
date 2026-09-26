@@ -241,6 +241,8 @@ struct Hub {
     layout_summary: String,
     /// Motion statistics of the current stay on a client (logged on return).
     visit: Option<Visit>,
+    /// Keeps a resting mouse from creeping the cursor on a client.
+    rest: crate::rest::RestFilter,
     /// Clients the user forgot (see [`ServerDeps::forgotten`]).
     forgotten: HashSet<DeviceId>,
     /// Server password; `None` = open.
@@ -380,6 +382,7 @@ impl Hub {
             engine,
             slots,
             pressed: Pressed::default(),
+            rest: crate::rest::RestFilter::default(),
             consumed_keys: HashSet::new(),
             hotkeys: Vec::new(),
             net,
@@ -610,7 +613,7 @@ impl Hub {
         match ev {
             CaptureEvent::Motion { pos, dx, dy } => {
                 let ctx = self.ctx();
-                let out = match self.engine.focus() {
+                let (out, dx, dy) = match self.engine.focus() {
                     Focus::Local => {
                         let ctx = EdgeContext { fullscreen: self.fullscreen_blocked(), ..ctx };
                         self.last_local_pos = pos;
@@ -620,13 +623,17 @@ impl Hub {
                         if out == Outcome::None && (dx != 0 || dy != 0) {
                             self.note_edge(pos, dx, dy, &ctx);
                         }
-                        out
+                        (out, dx, dy)
                     }
                     Focus::Remote { .. } => {
+                        let (dx, dy) = self.rest.filter((dx, dy), Instant::now());
+                        if (dx, dy) == (0, 0) {
+                            return;
+                        }
                         if let Some(v) = self.visit.as_mut() {
                             v.moved(dx, dy);
                         }
-                        self.engine.on_remote_move(dx, dy, ctx)
+                        (self.engine.on_remote_move(dx, dy, ctx), dx, dy)
                     }
                 };
                 self.apply(out, dx, dy);
@@ -742,6 +749,7 @@ impl Hub {
                     Some(prev) => self.leave(prev),
                     None => self.capture.set_grab(true),
                 }
+                self.rest.reset();
                 let leds = self.capture.leds();
                 self.send_control(machine, Control::Enter { pos, leds });
                 self.send_input(machine, Input::MouseAbs(pos));

@@ -584,6 +584,18 @@ unsafe extern "C-unwind" fn session_callback(
     if CGEvent::integer_value_field(Some(ev), CGEventField::EventSourceUserData) == passed_mark() {
         return pass;
     }
+    // Motion posted by software (a keep-awake jiggler, a remote-control or
+    // gesture tool) is not the hand's: it must not move the client's cursor,
+    // which then moved on its own. Swallowed like everything else here.
+    if matches!(
+        ty,
+        CGEventType::MouseMoved
+            | CGEventType::LeftMouseDragged
+            | CGEventType::RightMouseDragged
+            | CGEventType::OtherMouseDragged
+    ) {
+        return std::ptr::null_mut();
+    }
     handle(shared, ty, ev, pass)
 }
 
@@ -1120,6 +1132,7 @@ mod tests {
         media_keys_go_to_the_client_while_grabbed();
         clicks_and_motion_go_to_the_client_once_and_the_mac_cursor_stays();
         extra_buttons_never_reach_mouse_software_started_later();
+        motion_posted_by_software_does_not_move_the_client();
     }
 
     fn drain(rx: &mut mpsc::Receiver<CaptureEvent>, for_ms: u64) -> Vec<CaptureEvent> {
@@ -1180,6 +1193,26 @@ mod tests {
         cap.control.stop();
         assert_eq!((dx, dy), (1000, 200), "the client got a different motion than the mouse made");
         assert!(!pin::needs_repin(now, start), "this Mac's cursor moved away: {start:?} -> {now:?}");
+    }
+
+    /// Motion posted at the session level (by software, past the HID tap) while
+    /// a client has control: swallowed, and never sent to the client.
+    fn motion_posted_by_software_does_not_move_the_client() {
+        let mut cap = start_capture().expect("event tap (Accessibility)");
+        cap.control.set_grab(true);
+        std::thread::sleep(Duration::from_millis(200));
+        let start = cursor_pos().expect("cursor");
+        let _ = drain(&mut cap.events, 100);
+        let mut p = start;
+        for _ in 0..20 {
+            p = Point::new(p.x + 3, p.y);
+            post_mouse(CGEventTapLocation::SessionEventTap, CGEventType::MouseMoved, p, CGMouseButton::Left, (3, 0));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let moved = drain(&mut cap.events, 400).into_iter().any(|e| matches!(e, CaptureEvent::Motion { .. }));
+        cap.control.set_grab(false);
+        cap.control.stop();
+        assert!(!moved, "motion posted by software was sent to the client");
     }
 
     /// Back presses (button 3) seen by the stand-in for mouse software below.
