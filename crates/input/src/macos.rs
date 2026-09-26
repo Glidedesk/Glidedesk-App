@@ -18,9 +18,9 @@ use objc2_core_graphics::{
     CGAssociateMouseAndMouseCursorPosition, CGDirectDisplayID, CGDisplayBounds, CGDisplayCopyDisplayMode,
     CGDisplayHideCursor, CGDisplayIsBuiltin, CGDisplayMode, CGDisplayModelNumber, CGDisplaySerialNumber,
     CGDisplayShowCursor, CGDisplayVendorNumber, CGEvent, CGEventField, CGEventFlags, CGEventSource,
-    CGEventSourceStateID, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventTapProxy, CGEventType,
-    CGGetActiveDisplayList, CGMainDisplayID, CGMouseButton, CGPreflightListenEventAccess, CGPreflightPostEventAccess,
-    CGRequestPostEventAccess, CGScrollEventUnit, CGWarpMouseCursorPosition,
+    CGEventSourceStateID, CGEventTapCallBack, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
+    CGEventTapProxy, CGEventType, CGGetActiveDisplayList, CGMainDisplayID, CGMouseButton, CGPreflightListenEventAccess,
+    CGPreflightPostEventAccess, CGRequestPostEventAccess, CGScrollEventUnit, CGWarpMouseCursorPosition,
 };
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
@@ -236,20 +236,34 @@ struct SendRunLoop(CFRetained<CFRunLoop>);
 unsafe impl Send for SendRunLoop {}
 unsafe impl Sync for SendRunLoop {}
 
-struct SendPort(CFRetained<CFMachPort>);
-// SAFETY: CGEventTapEnable may be called from any thread.
-unsafe impl Send for SendPort {}
-unsafe impl Sync for SendPort {}
+/// Both event taps.
+struct Taps {
+    hid: CFRetained<CFMachPort>,
+    /// Second tap, after the HID one: catches what other software posts itself
+    /// (see `session_callback`). Missing when macOS refused it.
+    session: Option<CFRetained<CFMachPort>>,
+}
+// SAFETY: CGEventTapEnable and CFMachPortInvalidate may be called from any thread.
+unsafe impl Send for Taps {}
+
+impl Taps {
+    fn invalidate(&self) {
+        for t in std::iter::once(&self.hid).chain(&self.session) {
+            CGEvent::tap_enable(t, false);
+            t.invalidate();
+        }
+    }
+}
 
 struct Shared {
     grabbed: AtomicBool,
     stopped: AtomicBool,
     tx: mpsc::Sender<CaptureEvent>,
     run_loop: OnceLock<SendRunLoop>,
-    tap: OnceLock<SendPort>,
-    /// Second tap, after the HID one: catches what other software posts itself
-    /// (see `session_callback`).
-    session_tap: OnceLock<SendPort>,
+    /// `None` until the capture thread created them and again once it tore them
+    /// down: `front_taps` must not create taps after that, their callbacks would
+    /// outlive `Shared`.
+    taps: Mutex<Option<Taps>>,
     pin: Mutex<Point>,
     /// Motion across our warps (see `crate::pin`). Its lock also keeps the
     /// capture thread from pulling the cursor back while control changes hands.
@@ -264,6 +278,45 @@ impl Shared {
         // Never block the system input path; drop on overflow.
         if self.tx.try_send(ev).is_err() {
             debug!("capture queue full; event dropped");
+        }
+    }
+
+    /// Recreates both taps in front of every other tap at their location.
+    ///
+    /// Taps run newest first. Mouse software (Logi Options+, `SteerMouse`,
+    /// `BetterTouchTool`, …) started after Glidedesk — at login, or restarted
+    /// by its updater — would see an external mouse's extra buttons before our
+    /// tap swallows them and act on them here as well: Back/Forward went back
+    /// on both computers. In front again, ours swallows them first while another
+    /// computer has control, so that software never sees them. The new session
+    /// tap is enabled, as `set_grab` wants it before a grab.
+    fn front_taps(self: &Arc<Self>) {
+        let Some(rl) = self.run_loop.get() else { return };
+        let mut taps = lock(&self.taps);
+        let Some(old) = taps.as_ref() else { return };
+        // Old off first: no event may pass through both (it would be sent twice).
+        CGEvent::tap_enable(&old.hid, false);
+        let user = Arc::as_ptr(self).cast_mut().cast::<c_void>();
+        let Some(hid) = new_tap(CGEventTapLocation::HIDEventTap, hid_events(), Some(tap_callback), user, &rl.0) else {
+            warn!("could not move the event tap in front of other software");
+            CGEvent::tap_enable(&old.hid, true);
+            if let Some(t) = &old.session {
+                CGEvent::tap_enable(t, true);
+            }
+            return;
+        };
+        if let Some(t) = &old.session {
+            CGEvent::tap_enable(t, false);
+        }
+        let session = new_tap(
+            CGEventTapLocation::AnnotatedSessionEventTap,
+            session_events(),
+            Some(session_callback),
+            user,
+            &rl.0,
+        );
+        if let Some(old) = taps.replace(Taps { hid, session }) {
+            old.invalidate();
         }
     }
 }
@@ -283,9 +336,8 @@ impl CaptureControl for Control {
         // `GRAB_ONLY`). It is on before `grabbed` says so and off only after:
         // `session_callback` passes everything while not grabbed, so no event
         // posted in between can slip through to this Mac.
-        let session = self.0.session_tap.get();
-        if grab && let Some(t) = session {
-            CGEvent::tap_enable(&t.0, true);
+        if grab && !self.0.grabbed.load(Ordering::SeqCst) {
+            self.0.front_taps();
         }
         // Held until the cursor is where it belongs: the capture thread can't pull
         // it back to the pin after control returned here (it checks `grabbed`
@@ -295,8 +347,8 @@ impl CaptureControl for Control {
         if was == grab {
             return;
         }
-        if !grab && let Some(t) = session {
-            CGEvent::tap_enable(&t.0, false);
+        if !grab && let Some(t) = lock(&self.0.taps).as_ref().and_then(|t| t.session.as_ref()) {
+            CGEvent::tap_enable(t, false);
         }
         if grab {
             self.0.gate.on_grab();
@@ -381,6 +433,65 @@ const GRAB_ONLY: [u32; 13] = [23, 24, 18, 19, 20, 29, 30, 31, 32, 33, 34, 37, 38
 
 fn mask(types: &[CGEventType]) -> u64 {
     types.iter().fold(0u64, |m, t| m | (1u64 << t.0))
+}
+
+/// What the HID tap asks for: never gesture or system-defined events (see
+/// `GRAB_ONLY`); the session tap, running only while grabbed, does.
+fn hid_events() -> u64 {
+    mask(&[
+        CGEventType::MouseMoved,
+        CGEventType::LeftMouseDown,
+        CGEventType::LeftMouseUp,
+        CGEventType::RightMouseDown,
+        CGEventType::RightMouseUp,
+        CGEventType::OtherMouseDown,
+        CGEventType::OtherMouseUp,
+        CGEventType::LeftMouseDragged,
+        CGEventType::RightMouseDragged,
+        CGEventType::OtherMouseDragged,
+        CGEventType::ScrollWheel,
+        CGEventType::KeyDown,
+        CGEventType::KeyUp,
+        CGEventType::FlagsChanged,
+    ])
+}
+
+fn session_events() -> u64 {
+    hid_events() | (1u64 << SYSTEM_DEFINED) | GRAB_ONLY.iter().fold(0u64, |m, t| m | (1u64 << t))
+}
+
+/// An active tap at the head of `location`, in front of every tap already
+/// there, serviced by `rl`. `user` must stay valid for as long as the tap exists.
+fn new_tap(
+    location: CGEventTapLocation,
+    events: u64,
+    callback: CGEventTapCallBack,
+    user: *mut c_void,
+    rl: &CFRunLoop,
+) -> Option<CFRetained<CFMachPort>> {
+    // SAFETY: both callbacks match CGEventTapCallBack; the caller keeps `user` valid.
+    let tap = unsafe {
+        CGEvent::tap_create(
+            location,
+            CGEventTapPlacement::HeadInsertEventTap,
+            CGEventTapOptions::Default,
+            events,
+            callback,
+            user,
+        )
+    }?;
+    // Only a tap that is serviced by this run loop may stay: an unserviced
+    // active tap would hold up input.
+    let Some(src) = CFMachPort::new_run_loop_source(None, Some(&tap), 0) else {
+        tap.invalidate();
+        return None;
+    };
+    // SAFETY: kCFRunLoopCommonModes is a valid static CF string.
+    rl.add_source(Some(&src), unsafe { kCFRunLoopCommonModes });
+    // Added from another thread by `front_taps`: have the loop pick it up now.
+    rl.wake_up();
+    CGEvent::tap_enable(&tap, true);
+    Some(tap)
 }
 
 /// Device-dependent modifier bits (IOLLEvent.h `NX_DEVICE*KEYMASK`).
@@ -481,12 +592,12 @@ fn tap_disabled(shared: &Shared, ty: CGEventType) -> bool {
     if ty != CGEventType::TapDisabledByTimeout && ty != CGEventType::TapDisabledByUserInput {
         return false;
     }
-    if let Some(t) = shared.tap.get() {
-        CGEvent::tap_enable(&t.0, true);
-    }
-    // The session tap stays off while this Mac has control (see `GRAB_ONLY`).
-    if let Some(t) = shared.session_tap.get() {
-        CGEvent::tap_enable(&t.0, shared.grabbed.load(Ordering::SeqCst));
+    if let Some(taps) = lock(&shared.taps).as_ref() {
+        CGEvent::tap_enable(&taps.hid, true);
+        // The session tap stays off while this Mac has control (see `GRAB_ONLY`).
+        if let Some(t) = &taps.session {
+            CGEvent::tap_enable(t, shared.grabbed.load(Ordering::SeqCst));
+        }
     }
     shared.emit(CaptureEvent::Interrupted);
     true
@@ -636,8 +747,7 @@ fn start_taps() -> Result<(Arc<Shared>, mpsc::Receiver<CaptureEvent>), InputErro
         stopped: AtomicBool::new(false),
         tx,
         run_loop: OnceLock::new(),
-        tap: OnceLock::new(),
-        session_tap: OnceLock::new(),
+        taps: Mutex::new(None),
         pin: Mutex::new(Point::default()),
         motion: Mutex::new(pin::Tracker::default()),
         last_flags: Mutex::new(0),
@@ -648,105 +758,47 @@ fn start_taps() -> Result<(Arc<Shared>, mpsc::Receiver<CaptureEvent>), InputErro
     std::thread::Builder::new()
         .name("gd-capture".into())
         .spawn(move || {
-            // The HID tap never asks for gesture or system-defined events (see
-            // `GRAB_ONLY`); the session tap, running only while grabbed, does.
-            let events = mask(&[
-                CGEventType::MouseMoved,
-                CGEventType::LeftMouseDown,
-                CGEventType::LeftMouseUp,
-                CGEventType::RightMouseDown,
-                CGEventType::RightMouseUp,
-                CGEventType::OtherMouseDown,
-                CGEventType::OtherMouseUp,
-                CGEventType::LeftMouseDragged,
-                CGEventType::RightMouseDragged,
-                CGEventType::OtherMouseDragged,
-                CGEventType::ScrollWheel,
-                CGEventType::KeyDown,
-                CGEventType::KeyUp,
-                CGEventType::FlagsChanged,
-            ]);
-            let session_events =
-                events | (1u64 << SYSTEM_DEFINED) | GRAB_ONLY.iter().fold(0u64, |m, t| m | (1u64 << t));
             let user = Arc::into_raw(thread_shared.clone()) as *mut c_void;
-            // SAFETY: callback matches CGEventTapCallBack; `user` stays valid
-            // until `Arc::from_raw` below, after the run loop has exited.
-            let tap = unsafe {
-                CGEvent::tap_create(
-                    CGEventTapLocation::HIDEventTap,
-                    CGEventTapPlacement::HeadInsertEventTap,
-                    CGEventTapOptions::Default,
-                    events,
-                    Some(tap_callback),
-                    user,
-                )
-            };
-            let Some(tap) = tap else {
-                // SAFETY: reclaim the leaked Arc; the tap was never created.
-                drop(unsafe { Arc::from_raw(user as *const Shared) });
-                let _ = ready_tx.send(Err(InputError::Permission("Accessibility")));
-                return;
-            };
-            let Some(source) = CFMachPort::new_run_loop_source(None, Some(&tap), 0) else {
-                // SAFETY: as above.
-                drop(unsafe { Arc::from_raw(user as *const Shared) });
-                let _ = ready_tx.send(Err(InputError::Os("CFMachPortCreateRunLoopSource failed".into())));
-                return;
-            };
             let Some(rl) = CFRunLoop::current() else {
-                // SAFETY: as above.
+                // SAFETY: reclaim the leaked Arc; no tap was created.
                 drop(unsafe { Arc::from_raw(user as *const Shared) });
                 let _ = ready_tx.send(Err(InputError::Os("no run loop".into())));
                 return;
             };
-            // SAFETY: kCFRunLoopCommonModes is a valid static CF string.
-            rl.add_source(Some(&source), unsafe { kCFRunLoopCommonModes });
-            CGEvent::tap_enable(&tap, true);
-            // SAFETY: as for the HID tap; same `user`, released after both taps.
-            let session = unsafe {
-                CGEvent::tap_create(
-                    CGEventTapLocation::AnnotatedSessionEventTap,
-                    CGEventTapPlacement::HeadInsertEventTap,
-                    CGEventTapOptions::Default,
-                    session_events,
-                    Some(session_callback),
-                    user,
-                )
+            let Some(tap) = new_tap(CGEventTapLocation::HIDEventTap, hid_events(), Some(tap_callback), user, &rl)
+            else {
+                // SAFETY: as above.
+                drop(unsafe { Arc::from_raw(user as *const Shared) });
+                let _ = ready_tx.send(Err(InputError::Permission("Accessibility")));
+                return;
             };
-            // Only a tap that is serviced by this run loop may stay: an unserviced
-            // active tap would hold up input.
-            let session = session.and_then(|t| {
-                if let Some(src) = CFMachPort::new_run_loop_source(None, Some(&t), 0) {
-                    // SAFETY: as above.
-                    rl.add_source(Some(&src), unsafe { kCFRunLoopCommonModes });
-                    Some(t)
-                } else {
-                    t.invalidate();
-                    None
-                }
-            });
+            let session = new_tap(
+                CGEventTapLocation::AnnotatedSessionEventTap,
+                session_events(),
+                Some(session_callback),
+                user,
+                &rl,
+            );
             if let Some(t) = &session {
                 // Off until another computer has control (`set_grab`).
                 CGEvent::tap_enable(t, thread_shared.grabbed.load(Ordering::SeqCst));
-                let _ = thread_shared.session_tap.set(SendPort(t.clone()));
             } else {
                 warn!(
                     "session event tap unavailable: buttons that mouse software turns into shortcuts stay on this Mac"
                 );
             }
+            *lock(&thread_shared.taps) = Some(Taps { hid: tap, session });
             let _ = thread_shared.run_loop.set(SendRunLoop(rl));
-            let _ = thread_shared.tap.set(SendPort(tap.clone()));
             let _ = ready_tx.send(Ok(()));
             while !thread_shared.stopped.load(Ordering::SeqCst) {
                 CFRunLoop::run();
             }
-            CGEvent::tap_enable(&tap, false);
-            tap.invalidate();
-            if let Some(t) = &session {
-                CGEvent::tap_enable(t, false);
-                t.invalidate();
+            // `front_taps` may have replaced them: tear down the current ones.
+            if let Some(taps) = lock(&thread_shared.taps).take() {
+                taps.invalidate();
             }
-            // SAFETY: both taps are disabled and invalidated; no more callbacks.
+            // SAFETY: every tap is disabled and invalidated, and none can be
+            // created any more (`taps` is `None`); no more callbacks.
             drop(unsafe { Arc::from_raw(user as *const Shared) });
             debug!("capture thread stopped");
         })
@@ -1055,6 +1107,7 @@ mod tests {
         shortcuts_posted_by_mouse_software_go_to_the_client_while_grabbed();
         media_keys_go_to_the_client_while_grabbed();
         clicks_and_motion_go_to_the_client_once_and_the_mac_cursor_stays();
+        extra_buttons_never_reach_mouse_software_started_later();
     }
 
     fn drain(rx: &mut mpsc::Receiver<CaptureEvent>, for_ms: u64) -> Vec<CaptureEvent> {
@@ -1117,6 +1170,77 @@ mod tests {
         assert!(!pin::needs_repin(now, start), "this Mac's cursor moved away: {start:?} -> {now:?}");
     }
 
+    /// Back presses (button 3) seen by the stand-in for mouse software below.
+    static OTHER_SOFTWARE_SAW: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    /// A tap like Logi Options+ installs: it acts on extra buttons and lets them through.
+    unsafe extern "C-unwind" fn other_software(
+        _proxy: CGEventTapProxy,
+        ty: CGEventType,
+        event: NonNull<CGEvent>,
+        _user: *mut c_void,
+    ) -> *mut CGEvent {
+        // SAFETY: the event pointer is valid for the duration of the callback.
+        let ev = unsafe { event.as_ref() };
+        if ty == CGEventType::OtherMouseDown
+            && CGEvent::integer_value_field(Some(ev), CGEventField::MouseEventButtonNumber) == 3
+        {
+            OTHER_SOFTWARE_SAW.fetch_add(1, Ordering::SeqCst);
+        }
+        event.as_ptr()
+    }
+
+    /// An external mouse's Back button while a client has control, with mouse
+    /// software whose tap was created after ours (so in front of it): the
+    /// press must reach the client once and never that software, or it acts on
+    /// this Mac as well.
+    fn extra_buttons_never_reach_mouse_software_started_later() {
+        let mut cap = start_capture().expect("event tap (Accessibility)");
+        let (rl_tx, rl_rx) = std::sync::mpsc::channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_thread = stop.clone();
+        let other = std::thread::spawn(move || {
+            let rl = CFRunLoop::current().expect("run loop");
+            let events = mask(&[CGEventType::OtherMouseDown, CGEventType::OtherMouseUp]);
+            let tap = new_tap(CGEventTapLocation::HIDEventTap, events, Some(other_software), std::ptr::null_mut(), &rl)
+                .expect("second event tap");
+            rl_tx.send(SendRunLoop(rl.clone())).expect("send run loop");
+            while !stop_thread.load(Ordering::SeqCst) {
+                CFRunLoop::run();
+            }
+            CGEvent::tap_enable(&tap, false);
+            tap.invalidate();
+        });
+        let other_rl = rl_rx.recv().expect("second tap started");
+
+        cap.control.set_grab(true);
+        std::thread::sleep(Duration::from_millis(200));
+        let at = cursor_pos().expect("cursor");
+        let _ = drain(&mut cap.events, 100);
+        for ty in [CGEventType::OtherMouseDown, CGEventType::OtherMouseUp] {
+            let ev = CGEvent::new_mouse_event(None, ty, cg(at), CGMouseButton::Center).expect("mouse event");
+            CGEvent::set_integer_value_field(Some(&ev), CGEventField::MouseEventButtonNumber, 3);
+            CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&ev));
+        }
+        let back: Vec<bool> = drain(&mut cap.events, 500)
+            .into_iter()
+            .filter_map(|e| match e {
+                CaptureEvent::Button { button: MouseButton::Back, down } => Some(down),
+                _ => None,
+            })
+            .collect();
+        cap.control.set_grab(false);
+        cap.control.stop();
+        stop.store(true, Ordering::SeqCst);
+        while !other.is_finished() {
+            other_rl.0.stop();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        other.join().expect("second tap thread");
+        assert_eq!(back, vec![true, false], "Back did not reach the client exactly once: {back:?}");
+        assert_eq!(OTHER_SOFTWARE_SAW.load(Ordering::SeqCst), 0, "mouse software saw Back: it acts on this Mac too");
+    }
+
     /// Posts a key the way mouse utilities (Logi Options+, `SteerMouse`, …) do for
     /// buttons set to a shortcut: at the session level, past the HID tap.
     fn post_key(code: u16, down: bool, flags: CGEventFlags) {
@@ -1140,12 +1264,15 @@ mod tests {
     fn the_session_tap_only_runs_while_a_client_has_control() {
         let (shared, _events) = start_taps().expect("event taps (Accessibility)");
         let control = Control(shared.clone());
-        let tap = &shared.session_tap.get().expect("session tap").0;
-        assert!(!CGEvent::tap_is_enabled(tap), "on while this Mac has control: its gestures stop working");
+        let session_on = || {
+            let taps = lock(&shared.taps);
+            CGEvent::tap_is_enabled(taps.as_ref().and_then(|t| t.session.as_ref()).expect("session tap"))
+        };
+        assert!(!session_on(), "on while this Mac has control: its gestures stop working");
         control.set_grab(true);
-        assert!(CGEvent::tap_is_enabled(tap), "off while a client has control: gestures and remapped buttons act here");
+        assert!(session_on(), "off while a client has control: gestures and remapped buttons act here");
         control.set_grab(false);
-        assert!(!CGEvent::tap_is_enabled(tap), "still on after control came back");
+        assert!(!session_on(), "still on after control came back");
         control.stop();
     }
 
