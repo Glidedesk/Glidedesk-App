@@ -5,6 +5,7 @@
 
 pub mod client;
 pub mod health;
+mod rest;
 pub mod server;
 pub mod sync;
 pub mod transfers;
