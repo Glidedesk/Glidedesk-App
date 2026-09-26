@@ -488,7 +488,7 @@ fn capture_thread(shared: &Arc<Shared>, ready: &std::sync::mpsc::Sender<Result<(
         }
         let mouse = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), Some(instance), 0);
         let keyboard = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), Some(instance), 0);
-        let (Ok(mouse), Ok(keyboard)) = (mouse, keyboard) else {
+        let (Ok(mut mouse), Ok(mut keyboard)) = (mouse, keyboard) else {
             let _ = ready.send(Err(InputError::Os("SetWindowsHookEx failed".into())));
             return;
         };
@@ -497,6 +497,20 @@ fn capture_thread(shared: &Arc<Shared>, ready: &std::sync::mpsc::Sender<Result<(
         let mut msg = MSG::default();
         while GetMessageW(&raw mut msg, None, 0, 0).as_bool() {
             if msg.hwnd.is_invalid() && msg.message == WM_APP_GRAB {
+                if msg.wParam.0 == 1 {
+                    // Hooks run newest first. Mouse software (Logitech Options+, …)
+                    // started after Glidedesk would see an external mouse's extra
+                    // buttons before our hook swallows them and act on them here as
+                    // well. Reinstalled, ours is in front again (and back, should
+                    // Windows have dropped it as too slow). No hook runs before this
+                    // handler returns, so no event reaches both the old and the new one.
+                    if let Ok(h) = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), Some(instance), 0) {
+                        let _ = UnhookWindowsHookEx(std::mem::replace(&mut mouse, h));
+                    }
+                    if let Ok(h) = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), Some(instance), 0) {
+                        let _ = UnhookWindowsHookEx(std::mem::replace(&mut keyboard, h));
+                    }
+                }
                 if let Some(v) = veil {
                     if msg.wParam.0 == 1 {
                         let p = *lock(&shared.pin);
