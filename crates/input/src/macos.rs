@@ -579,7 +579,7 @@ unsafe extern "C-unwind" fn tap_callback(
     // SAFETY: the event pointer is valid for the duration of the callback.
     let ev = unsafe { event.as_ref() };
     let pass = event.as_ptr();
-    if tap_disabled(shared, ty) {
+    if tap_disabled(shared, ty, false) {
         return pass;
     }
     let out = handle(shared, ty, ev, pass);
@@ -605,7 +605,7 @@ unsafe extern "C-unwind" fn session_callback(
     // SAFETY: the event pointer is valid for the duration of the callback.
     let ev = unsafe { event.as_ref() };
     let pass = event.as_ptr();
-    if tap_disabled(shared, ty) || !shared.grabbed.load(Ordering::Relaxed) {
+    if tap_disabled(shared, ty, true) || !shared.grabbed.load(Ordering::Relaxed) {
         return pass;
     }
     if CGEvent::integer_value_field(Some(ev), CGEventField::EventSourceUserData) == passed_mark() {
@@ -626,19 +626,36 @@ unsafe extern "C-unwind" fn session_callback(
     handle(shared, ty, ev, pass)
 }
 
-/// macOS turns a tap off when it is too slow or on user input: turn both back on.
-fn tap_disabled(shared: &Shared, ty: CGEventType) -> bool {
+/// macOS turns a tap off when it is too slow or on user input: turn it back on.
+///
+/// Each tap is told about its own disabling, including the times Glidedesk
+/// switched it off itself: the session tap is off while this Mac has control,
+/// and switching it off makes macOS report that too. Only a tap that should be
+/// on and is off is switched back on, and only that is an interruption. Setting
+/// both taps on every report made macOS report again, forever: the capture
+/// thread spent most of its time switching taps (a core busy, the Mac hot), and
+/// every round told the client to release everything.
+fn tap_disabled(shared: &Shared, ty: CGEventType, session: bool) -> bool {
     if ty != CGEventType::TapDisabledByTimeout && ty != CGEventType::TapDisabledByUserInput {
         return false;
     }
-    if let Some(taps) = lock(&shared.taps).as_ref() {
-        CGEvent::tap_enable(&taps.hid, true);
-        // The session tap stays off while this Mac has control (see `GRAB_ONLY`).
-        if let Some(t) = &taps.session {
-            CGEvent::tap_enable(t, shared.grabbed.load(Ordering::SeqCst));
-        }
+    let wanted = !shared.stopped.load(Ordering::SeqCst) && (!session || shared.grabbed.load(Ordering::SeqCst));
+    if !wanted {
+        return true;
     }
-    shared.emit(CaptureEvent::Interrupted);
+    let reenabled = lock(&shared.taps).as_ref().is_some_and(|taps| {
+        let tap = if session { taps.session.as_ref() } else { Some(&taps.hid) };
+        tap.is_some_and(|t| {
+            let off = !CGEvent::tap_is_enabled(t);
+            if off {
+                CGEvent::tap_enable(t, true);
+            }
+            off
+        })
+    });
+    if reenabled {
+        shared.emit(CaptureEvent::Interrupted);
+    }
     true
 }
 
@@ -1166,6 +1183,7 @@ mod tests {
             return;
         }
         the_session_tap_only_runs_while_a_client_has_control();
+        an_idle_mac_does_not_keep_switching_taps();
         shortcuts_posted_by_mouse_software_go_to_the_client_while_grabbed();
         media_keys_go_to_the_client_while_grabbed();
         clicks_and_motion_go_to_the_client_once_and_the_mac_cursor_stays();
@@ -1367,6 +1385,21 @@ mod tests {
         control.set_grab(false);
         assert!(!session_on(), "still on after control came back");
         control.stop();
+    }
+
+    /// Switching the session tap off (control back here) makes macOS report
+    /// it; answering that by setting both taps again made it report again,
+    /// forever: a busy core and a stream of "interrupted" events.
+    fn an_idle_mac_does_not_keep_switching_taps() {
+        let mut cap = start_capture().expect("event tap (Accessibility)");
+        cap.control.set_grab(true);
+        std::thread::sleep(Duration::from_millis(100));
+        cap.control.set_grab(false);
+        let _ = drain(&mut cap.events, 100);
+        let interrupted =
+            drain(&mut cap.events, 700).into_iter().filter(|e| matches!(e, CaptureEvent::Interrupted)).count();
+        cap.control.stop();
+        assert_eq!(interrupted, 0, "the taps kept being switched while nothing happened");
     }
 
     fn shortcuts_posted_by_mouse_software_go_to_the_client_while_grabbed() {
