@@ -1185,6 +1185,15 @@ mod tests {
             post_mouse(CGEventTapLocation::HIDEventTap, CGEventType::MouseMoved, p, CGMouseButton::Left, (25, 5));
             std::thread::sleep(Duration::from_millis(2));
         }
+        // A posted event puts the cursor where it says, pulled back or not (a
+        // hand's motion is relative): whether it ends near the pin would depend
+        // on which event the last pull-back fell on. Motionless events where the
+        // cursor is let the capture settle and pull it back, as for a real mouse.
+        for _ in 0..10 {
+            let here = cursor_pos().expect("cursor");
+            post_mouse(CGEventTapLocation::HIDEventTap, CGEventType::MouseMoved, here, CGMouseButton::Left, (0, 0));
+            std::thread::sleep(Duration::from_millis(5));
+        }
         let (dx, dy) = drain(&mut cap.events, 500).into_iter().fold((0, 0), |(x, y), e| match e {
             CaptureEvent::Motion { dx, dy, .. } => (x + dx, y + dy),
             _ => (x, y),
