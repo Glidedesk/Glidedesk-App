@@ -427,7 +427,8 @@ impl Seizer {
                     IOHIDDeviceRegisterInputValueCallback(d.device, None, std::ptr::null_mut());
                     IOHIDDeviceUnscheduleFromRunLoop(d.device, run_loop, Self::mode());
                 }
-                let _ = IOHIDDeviceClose(d.device, OPTIONS_NONE);
+                // With the options it was opened with, so the seize ends.
+                let _ = IOHIDDeviceClose(d.device, SEIZE);
             }
             self.closed.push(d.device);
         }
