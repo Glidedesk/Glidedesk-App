@@ -264,7 +264,8 @@ struct Shared {
     /// down: `front_taps` must not create taps after that, their callbacks would
     /// outlive `Shared`.
     taps: Mutex<Option<Taps>>,
-    pin: Mutex<Point>,
+    /// Where the hidden cursor is kept while grabbed, and how far it may drift.
+    pin: Mutex<(Point, i32)>,
     /// Motion across our warps (see `crate::pin`). Its lock also keeps the
     /// capture thread from pulling the cursor back while control changes hands.
     motion: Mutex<pin::Tracker>,
@@ -360,7 +361,7 @@ impl CaptureControl for Control {
             // other computer got stuck before it could come back (§14 B5/B7).
             let centre = to_rect(CGDisplayBounds(CGMainDisplayID()));
             let pin = Point::new(centre.x + centre.w / 2, centre.y + centre.h / 2);
-            *lock(&self.0.pin) = pin;
+            *lock(&self.0.pin) = (pin, pin::radius_for(centre));
             disable_warp_suppression();
             allow_background_cursor_hiding();
             let from = cursor_pos().unwrap_or(pin);
@@ -648,10 +649,10 @@ fn handle(shared: &Shared, ty: CGEventType, ev: &CGEvent, pass: *mut CGEvent) ->
                 // Keep the hidden cursor near the pin, judged by where it really is
                 // (the event's location can lag a warp). Left to roam, it follows the
                 // hand all over this screen. One warp at a time (see `crate::pin`).
-                let at = *lock(&shared.pin);
+                let (at, radius) = *lock(&shared.pin);
                 if motion.settled()
                     && let Some(real) = cursor_pos()
-                    && pin::needs_repin(real, at)
+                    && pin::needs_repin(real, at, radius)
                 {
                     repin(at);
                     motion.warped(real, at);
@@ -772,7 +773,7 @@ fn start_taps() -> Result<(Arc<Shared>, mpsc::Receiver<CaptureEvent>), InputErro
         tx,
         run_loop: OnceLock::new(),
         taps: Mutex::new(None),
-        pin: Mutex::new(Point::default()),
+        pin: Mutex::new((Point::default(), pin::PIN_RADIUS)),
         motion: Mutex::new(pin::Tracker::default()),
         last_flags: Mutex::new(0),
         gate: crate::gate::KeyGate::default(),
@@ -1192,7 +1193,8 @@ mod tests {
         cap.control.set_grab(false);
         cap.control.stop();
         assert_eq!((dx, dy), (1000, 200), "the client got a different motion than the mouse made");
-        assert!(!pin::needs_repin(now, start), "this Mac's cursor moved away: {start:?} -> {now:?}");
+        let radius = pin::radius_for(to_rect(CGDisplayBounds(CGMainDisplayID())));
+        assert!(!pin::needs_repin(now, start, radius), "this Mac's cursor moved away: {start:?} -> {now:?}");
     }
 
     /// Motion posted at the session level (by software, past the HID tap) while

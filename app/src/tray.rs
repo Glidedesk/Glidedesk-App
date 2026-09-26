@@ -37,6 +37,10 @@ struct Built {
     offer: Option<MenuItem<Wry>>,
     stopped: bool,
     tooltip: String,
+    /// What the items show now. Status arrives at least once a second, and
+    /// setting every item's text each time made the menu bar (macOS) or the
+    /// desktop's tray over D-Bus (Linux) redo the whole menu for nothing.
+    shown: Model,
 }
 
 fn icon(stopped: bool) -> Option<Image<'static>> {
@@ -116,6 +120,7 @@ fn ago(unix: Option<u64>) -> String {
     }
 }
 
+#[derive(Clone, PartialEq)]
 struct Model {
     header: String,
     running: bool,
@@ -206,6 +211,7 @@ fn build(app: &AppHandle, m: &Model) -> tauri::Result<(Menu<Wry>, Built)> {
     items.push(Box::new(header.clone()));
     items.push(Box::new(sep()?));
     let mut built = Built {
+        shown: m.clone(),
         structure: structure(m),
         header,
         clients: Vec::new(),
@@ -322,8 +328,11 @@ pub fn refresh(app: &AppHandle, s: &AgentStatus) {
     let mut guard = tray_state.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let same = guard.as_ref().is_some_and(|b| b.structure == structure(&m));
     if same {
-        if let Some(b) = guard.as_ref() {
+        if let Some(b) = guard.as_mut()
+            && b.shown != m
+        {
             update_in_place(b, &m);
+            b.shown = m.clone();
         }
     } else if let Ok((menu, built)) = build(app, &m) {
         let _ = tray.set_menu(Some(menu));
