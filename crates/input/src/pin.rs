@@ -2,9 +2,11 @@
 //!
 //! A background app can't stop macOS from moving the real cursor: the event tap
 //! only swallows the events. So the (hidden) cursor is pulled back to a pin in
-//! the middle of the screen once it drifts [`PIN_RADIUS`] points away —
+//! the middle of the screen once it drifts [`radius_for`] points away —
 //! otherwise it roams the whole screen in step with the hand, and shows up
-//! doing so whenever macOS makes it visible again.
+//! doing so whenever macOS makes it visible again. The radius is as large as
+//! the screen allows: each pull is a warp the window server has to carry out,
+//! and with a small one a fast mouse caused hundreds a second (CPU and GPU).
 //!
 //! Every pull (a warp) disturbs one motion event: the first one made after it
 //! reports the jump as well (its delta = the hand's motion + the jump). Events
@@ -15,10 +17,14 @@
 //! Getting this wrong sent a fast mouse (many events, big steps) backwards by
 //! the jump every few events, so it hardly moved on the other computer.
 
-use glidedesk_proto::Point;
+use glidedesk_proto::{Point, Rect};
 
-/// How far (points) the hidden cursor may drift from the pin before it is pulled back.
+/// The smallest drift (points) from the pin that is pulled back.
 pub const PIN_RADIUS: i32 = 80;
+/// The largest.
+pub const MAX_PIN_RADIUS: i32 = 240;
+/// Room kept between the drifting cursor and the screen edge.
+const EDGE_MARGIN: i32 = 16;
 
 /// Largest motion (points) accepted from one event; a larger value is a warp
 /// artefact and would fling the cursor on the other computer.
@@ -43,10 +49,18 @@ pub struct Tracker {
     last: (i32, i32),
 }
 
-/// Is the cursor at `real` far enough from `pin` to be pulled back?
+/// How far the cursor may drift from a pin in the middle of `screen`: as far
+/// as it can go without one more event's motion ([`MAX_STEP`]) reaching the
+/// edge, where macOS would stop the cursor and swallow the motion.
 #[must_use]
-pub const fn needs_repin(real: Point, pin: Point) -> bool {
-    (real.x - pin.x).abs() > PIN_RADIUS || (real.y - pin.y).abs() > PIN_RADIUS
+pub fn radius_for(screen: Rect) -> i32 {
+    (screen.w.min(screen.h) / 2 - MAX_STEP - EDGE_MARGIN).clamp(PIN_RADIUS, MAX_PIN_RADIUS)
+}
+
+/// Is the cursor at `real` more than `radius` from `pin`, so pulled back?
+#[must_use]
+pub const fn needs_repin(real: Point, pin: Point, radius: i32) -> bool {
+    (real.x - pin.x).abs() > radius || (real.y - pin.y).abs() > radius
 }
 
 fn step(v: (i32, i32)) -> (i32, i32) {
@@ -102,10 +116,21 @@ mod tests {
 
     #[test]
     fn drift_beyond_the_radius_is_pulled_back() {
-        assert!(!needs_repin(PIN, PIN));
-        assert!(!needs_repin(Point::new(PIN.x + PIN_RADIUS, PIN.y - PIN_RADIUS), PIN));
-        assert!(needs_repin(Point::new(PIN.x + PIN_RADIUS + 1, PIN.y), PIN));
-        assert!(needs_repin(Point::new(PIN.x, PIN.y - PIN_RADIUS - 1), PIN));
+        let r = PIN_RADIUS;
+        assert!(!needs_repin(PIN, PIN, r));
+        assert!(!needs_repin(Point::new(PIN.x + r, PIN.y - r), PIN, r));
+        assert!(needs_repin(Point::new(PIN.x + r + 1, PIN.y), PIN, r));
+        assert!(needs_repin(Point::new(PIN.x, PIN.y - r - 1), PIN, r));
+    }
+
+    #[test]
+    fn the_radius_is_as_large_as_the_screen_allows() {
+        let air = Rect::new(0, 0, 1470, 956);
+        let r = radius_for(air);
+        assert_eq!(r, 956 / 2 - MAX_STEP - EDGE_MARGIN);
+        assert!(r + MAX_STEP < 956 / 2, "one more event from the radius stays on screen");
+        assert_eq!(radius_for(Rect::new(0, 0, 3840, 2160)), MAX_PIN_RADIUS);
+        assert_eq!(radius_for(Rect::new(0, 0, 800, 600)), PIN_RADIUS, "never below the old radius");
     }
 
     #[test]
@@ -171,7 +196,7 @@ mod tests {
             if queue.len() > lag {
                 let (hand, raw) = queue.pop_front().expect("queued");
                 out.push((hand, t.motion(raw)));
-                if t.settled() && needs_repin(cursor, PIN) {
+                if t.settled() && needs_repin(cursor, PIN, PIN_RADIUS) {
                     t.warped(cursor, PIN);
                     cursor = PIN;
                 }
