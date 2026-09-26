@@ -1,5 +1,5 @@
 [package]
-name = "glidedesk-net"
+name = "nexpingdesk-net"
 description = "QUIC transport, interface binding and discovery"
 version.workspace = true
 edition.workspace = true
@@ -14,8 +14,8 @@ hmac = "0.13"
 sha2 = "0.11"
 spake2 = "0.4"
 blake3.workspace = true
-glidedesk-proto.workspace = true
-glidedesk-config.workspace = true
+nexpingdesk-proto.workspace = true
+nexpingdesk-config.workspace = true
 mdns-sd.workspace = true
 netdev.workspace = true
 quinn.workspace = true

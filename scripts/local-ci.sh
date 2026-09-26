@@ -1,5 +1,5 @@
 #!/bin/sh
-# Glidedesk's pipeline, run locally in Docker — the same steps GitHub Actions
+# Nexpingdesk's pipeline, run locally in Docker — the same steps GitHub Actions
 # (.github/workflows/ci.yml) runs for every pull request, to check before pushing:
 #   test     builder image: UI typecheck + tests + build, rustfmt, cargo-deny, clippy, every
 #            Rust test, Windows cross-check (and macOS, when the SDK is present)
@@ -14,12 +14,12 @@
 # Usage: scripts/local-ci.sh [all|test|agents|package]      (default: all)
 # macOS: the Mac app is built only where the SDK is (Apple licence: Apple hardware);
 # on another machine it is reported as skipped. Its real event-tap tests need a Mac:
-#   GLIDEDESK_TAP_TESTS=1 cargo test -p glidedesk-input   (on the Mac)
+#   NEXPINGDESK_TAP_TESTS=1 cargo test -p nexpingdesk-input   (on the Mac)
 set -eu
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 RUN=docker/run.sh
-sdk="${GLIDEDESK_SDK:-$HOME/.cache/glidedesk/macos-sdk}"
+sdk="${NEXPINGDESK_SDK:-$HOME/.cache/nexpingdesk/macos-sdk}"
 have_sdk=false
 [ -d "$sdk/usr/lib" ] && have_sdk=true
 what="${1:-all}"
@@ -34,12 +34,12 @@ fail() {
 }
 
 images() {
-  if ! docker image inspect glidedesk-builder:latest >/dev/null 2>&1; then
+  if ! docker image inspect nexpingdesk-builder:latest >/dev/null 2>&1; then
     step "building the builder image (first run only, ~20 min)"
-    docker build -f docker/Dockerfile -t glidedesk-builder:latest . || fail "builder image"
+    docker build -f docker/Dockerfile -t nexpingdesk-builder:latest . || fail "builder image"
   fi
   if [ "$what" = all ] || [ "$what" = agents ]; then
-    docker build -q -t glidedesk-lab -f docker/lab/Dockerfile docker/lab >/dev/null || fail "lab image"
+    docker build -q -t nexpingdesk-lab -f docker/lab/Dockerfile docker/lab >/dev/null || fail "lab image"
   fi
 }
 
@@ -59,10 +59,10 @@ run_tests() {
 
 run_agents() {
   step "agents: real server + client on a virtual screen"
-  $RUN cargo build -p glidedesk-app --locked || fail "app build"
-  docker run --rm -v "$root:/src" -v gd-cargo-registry:/usr/local/cargo/registry -v gd-cargo-git:/usr/local/cargo/git \
-    -v gd-cache:/cache -w /src glidedesk-lab:latest \
-    sh -c 'Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp >/dev/null 2>&1 & sleep 1; DISPLAY=:99 bash scripts/os-smoke.sh /cache/target/debug/glidedesk' ||
+  $RUN cargo build -p nexpingdesk-app --locked || fail "app build"
+  docker run --rm -v "$root:/src" -v nd-cargo-registry:/usr/local/cargo/registry -v nd-cargo-git:/usr/local/cargo/git \
+    -v nd-cache:/cache -w /src nexpingdesk-lab:latest \
+    sh -c 'Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp >/dev/null 2>&1 & sleep 1; DISPLAY=:99 bash scripts/os-smoke.sh /cache/target/debug/nexpingdesk' ||
     fail "real agents"
   note "agents:   passed (connect, graceful restart, kill + restart, self-test)"
 }

@@ -1,4 +1,4 @@
-"""Generates Glidedesk app and tray icons (run once; outputs are committed)."""
+"""Generates Nexpingdesk app and tray icons (run once; outputs are committed)."""
 from PIL import Image, ImageDraw, ImageFilter
 import os, sys
 

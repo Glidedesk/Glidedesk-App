@@ -1,13 +1,13 @@
 # syntax=docker/dockerfile:1.7
 #
-# glidedesk-builder — the only place Glidedesk is compiled, tested and packaged.
+# nexpingdesk-builder — the only place Nexpingdesk is compiled, tested and packaged.
 #
 # Produces: Windows x64/ARM64 (cargo-xwin + NSIS), macOS arm64/x86_64/universal
 # (clang + ld64.lld against the host's macOS SDK, mounted at /opt/macos-sdk at
 # run time), Linux host build for tests.
 #
 # The macOS SDK is NEVER baked into this image (Apple licence: Apple hardware
-# only). `make sdk` (run on a Mac) copies it into ~/.cache/glidedesk and the
+# only). `make sdk` (run on a Mac) copies it into ~/.cache/nexpingdesk and the
 # Makefile mounts it read-only.
 
 # Pinned by digest (Dependabot updates it); the tag says which image it is.
@@ -86,7 +86,7 @@ RUN set -eux; \
 
 # ---- cross-compile configuration ------------------------------------------
 COPY docker/bin/ /usr/local/bin/
-RUN chmod 0755 /usr/local/bin/gd-*
+RUN chmod 0755 /usr/local/bin/nd-*
 
 ENV MACOS_SDK=/opt/macos-sdk \
     MACOSX_DEPLOYMENT_TARGET=13.0 \
@@ -97,12 +97,12 @@ ENV MACOS_SDK=/opt/macos-sdk \
     CARGO_TARGET_DIR=/cache/target \
     PNPM_HOME=/cache/pnpm \
     npm_config_store_dir=/cache/pnpm-store \
-    CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER=gd-macos-cc \
-    CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=gd-macos-cc \
-    CC_aarch64_apple_darwin=gd-macos-cc \
-    CC_x86_64_apple_darwin=gd-macos-cc \
-    CXX_aarch64_apple_darwin=gd-macos-cxx \
-    CXX_x86_64_apple_darwin=gd-macos-cxx \
+    CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER=nd-macos-cc \
+    CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=nd-macos-cc \
+    CC_aarch64_apple_darwin=nd-macos-cc \
+    CC_x86_64_apple_darwin=nd-macos-cc \
+    CXX_aarch64_apple_darwin=nd-macos-cxx \
+    CXX_x86_64_apple_darwin=nd-macos-cxx \
     AR_aarch64_apple_darwin=llvm-ar \
     AR_x86_64_apple_darwin=llvm-ar
 

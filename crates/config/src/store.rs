@@ -4,7 +4,7 @@
 //!   window where another user could read them).
 //! * Windows: the per-user `%APPDATA%` profile folder is already private to
 //!   the user, SYSTEM and Administrators; the agent additionally tightens the
-//!   ACL with `glidedesk-platform` at start-up.
+//!   ACL with `nexpingdesk-platform` at start-up.
 //! * Writes go to a temp file in the same directory, are fsync'ed, then
 //!   renamed over the old file, so a crash never leaves a half-written config.
 
@@ -12,13 +12,16 @@ use std::fs;
 use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
-use glidedesk_proto::DeviceId;
+use nexpingdesk_proto::DeviceId;
 
 use crate::migrate;
 use crate::schema::{Config, SCHEMA_VERSION};
 use crate::validate::Issue;
 
-pub const APP_DIR_NAME: &str = "Glidedesk";
+pub const APP_DIR_NAME: &str = "Nexpingdesk";
+/// The app's former name. Settings, login entries and installs made under it
+/// are taken over once (see [`ConfigStore::default_location`]).
+pub const LEGACY_APP_DIR_NAME: &str = "Glidedesk";
 pub const CONFIG_FILE: &str = "config.toml";
 const BACKUP_DIR: &str = "backups";
 const KEEP_BACKUPS: usize = 5;
@@ -33,7 +36,7 @@ pub enum ConfigError {
     TooLarge,
     #[error("config is not valid TOML: {0}")]
     Parse(String),
-    #[error("config was written by a newer Glidedesk (schema {found}, this build supports {SCHEMA_VERSION})")]
+    #[error("config was written by a newer Nexpingdesk (schema {found}, this build supports {SCHEMA_VERSION})")]
     Newer { found: u32 },
     #[error("cannot serialise config: {0}")]
     Serialize(String),
@@ -61,6 +64,17 @@ pub struct Loaded {
     pub read_only: bool,
 }
 
+/// `name`'s folder under `base` (lower-case on Linux, as is usual there).
+fn app_dir(base: &Path, name: &str) -> PathBuf {
+    if cfg!(target_os = "linux") { base.join(name.to_lowercase()) } else { base.join(name) }
+}
+
+/// Moves the settings of the app's former name to `new`, once: only while
+/// `new` doesn't exist yet, so nothing is ever overwritten. Returns whether it did.
+pub fn take_over_legacy(old: &Path, new: &Path) -> bool {
+    !new.exists() && old.is_dir() && fs::rename(old, new).is_ok()
+}
+
 #[derive(Clone, Debug)]
 pub struct ConfigStore {
     dir: PathBuf,
@@ -68,20 +82,17 @@ pub struct ConfigStore {
 }
 
 impl ConfigStore {
-    /// Per-user location: macOS `~/Library/Application Support/Glidedesk`,
-    /// Windows `%APPDATA%\Glidedesk`, Linux `$XDG_CONFIG_HOME/glidedesk`.
+    /// Per-user location: macOS `~/Library/Application Support/Nexpingdesk`,
+    /// Windows `%APPDATA%\Nexpingdesk`, Linux `$XDG_CONFIG_HOME/nexpingdesk`.
     pub fn default_location() -> Result<Self, ConfigError> {
-        // Test / side-by-side instances: everything under $GLIDEDESK_HOME, fully
+        // Test / side-by-side instances: everything under $NEXPINGDESK_HOME, fully
         // separate from a real installation's settings and control socket.
-        if let Some(home) = std::env::var_os("GLIDEDESK_HOME").filter(|h| !h.is_empty()) {
+        if let Some(home) = std::env::var_os("NEXPINGDESK_HOME").filter(|h| !h.is_empty()) {
             return Ok(Self::at(PathBuf::from(home).join("config")));
         }
         let base = directories::BaseDirs::new().ok_or(ConfigError::NoHome)?;
-        let dir = if cfg!(target_os = "linux") {
-            base.config_dir().join(APP_DIR_NAME.to_lowercase())
-        } else {
-            base.config_dir().join(APP_DIR_NAME)
-        };
+        let dir = app_dir(base.config_dir(), APP_DIR_NAME);
+        take_over_legacy(&app_dir(base.config_dir(), LEGACY_APP_DIR_NAME), &dir);
         Ok(Self::at(dir))
     }
 
@@ -179,7 +190,7 @@ impl ConfigStore {
             return Err(ConfigError::ReadOnly);
         }
         let text = toml::to_string_pretty(config).map_err(|e| ConfigError::Serialize(e.to_string()))?;
-        let body = format!("# Glidedesk configuration — edited by the app; manual edits are kept.\n\n{text}");
+        let body = format!("# Nexpingdesk configuration — edited by the app; manual edits are kept.\n\n{text}");
         write_atomic(&self.path(), body.as_bytes())
     }
 
@@ -310,6 +321,23 @@ fn prune_backups(dir: &Path) -> Result<(), ConfigError> {
 mod tests {
     use super::*;
     use crate::schema::Role;
+
+    #[test]
+    fn settings_of_the_former_name_are_taken_over_once_and_never_overwrite() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (old, new) = (tmp.path().join(LEGACY_APP_DIR_NAME), tmp.path().join(APP_DIR_NAME));
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("config.toml"), "old").unwrap();
+        assert!(take_over_legacy(&old, &new));
+        assert_eq!(std::fs::read_to_string(new.join("config.toml")).unwrap(), "old");
+        assert!(!old.exists(), "moved, not copied");
+
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("config.toml"), "older").unwrap();
+        assert!(!take_over_legacy(&old, &new), "the new folder exists: leave both alone");
+        assert_eq!(std::fs::read_to_string(new.join("config.toml")).unwrap(), "old");
+        assert!(!take_over_legacy(&tmp.path().join("missing"), &tmp.path().join("other")));
+    }
 
     #[test]
     fn create_then_reload_keeps_identity() {

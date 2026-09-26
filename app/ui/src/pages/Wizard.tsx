@@ -51,11 +51,11 @@ export function Wizard({ status, config, onDone }: { status: AgentStatus; config
       </div>
     </div>,
     <div key="perm" className="space-y-4">
-      <h2 className="text-[19px] font-semibold sm:text-[22px]">{mac ? "Allow Glidedesk to use the keyboard and mouse" : "Almost there"}</h2>
+      <h2 className="text-[19px] font-semibold sm:text-[22px]">{mac ? "Allow Nexpingdesk to use the keyboard and mouse" : "Almost there"}</h2>
       {mac ? (
         <>
           <p className="text-muted">
-            Glidedesk needs <b>Accessibility</b> to read and move the keyboard and mouse. Click Allow, then turn Glidedesk on in System Settings.
+            Nexpingdesk needs <b>Accessibility</b> to read and move the keyboard and mouse. Click Allow, then turn Nexpingdesk on in System Settings.
             This page comes back and updates by itself.
           </p>
           <div className="space-y-2">
@@ -76,7 +76,7 @@ export function Wizard({ status, config, onDone }: { status: AgentStatus; config
           </div>
         </>
       ) : (
-        <p className="text-muted">Windows may ask to allow Glidedesk through the firewall on private networks — choose Allow.</p>
+        <p className="text-muted">Windows may ask to allow Nexpingdesk through the firewall on private networks — choose Allow.</p>
       )}
     </div>,
     <div key="net" className="space-y-4">
@@ -84,7 +84,7 @@ export function Wizard({ status, config, onDone }: { status: AgentStatus; config
         <>
           <h2 className="text-[19px] font-semibold sm:text-[22px]">Ready to share</h2>
           <p className="text-muted">
-            Glidedesk will listen on all networks. You can pick exact interfaces or IP addresses later in Network. Install Glidedesk on your
+            Nexpingdesk will listen on all networks. You can pick exact interfaces or IP addresses later in Network. Install Nexpingdesk on your
             other computers and choose Client — they appear here automatically.
           </p>
         </>

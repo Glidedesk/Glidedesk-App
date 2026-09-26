@@ -4,8 +4,8 @@
 //! agent → UI: `{"type": "response", "id": 7, "ok": true, "data": …}`
 //!             `{"type": "event", "event": "status", "data": …}`
 
-use glidedesk_config::Config;
-use glidedesk_proto::DeviceId;
+use nexpingdesk_config::Config;
+use nexpingdesk_proto::DeviceId;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

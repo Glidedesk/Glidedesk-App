@@ -13,7 +13,7 @@ pub mod transport;
 
 use std::net::IpAddr;
 
-use glidedesk_config::IpFilter;
+use nexpingdesk_config::IpFilter;
 
 pub use discovery::{Advertiser, Browser, DiscoveryEvent, ServerAd};
 pub use framed::{FrameReader, FrameWriter};
@@ -35,7 +35,7 @@ pub enum NetError {
     #[error("stream: {0}")]
     Stream(String),
     #[error("frame: {0}")]
-    Frame(#[from] glidedesk_proto::FrameError),
+    Frame(#[from] nexpingdesk_proto::FrameError),
     #[error("discovery: {0}")]
     Discovery(String),
 }

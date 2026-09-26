@@ -5,10 +5,10 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use glidedesk_config::{Config, RemapPreset};
-use glidedesk_input::{Injector, Pressed};
-use glidedesk_net::{Browser, DiscoveryEvent, FrameReader, FrameWriter, Tuning};
-use glidedesk_proto::{
+use nexpingdesk_config::{Config, RemapPreset};
+use nexpingdesk_input::{Injector, Pressed};
+use nexpingdesk_net::{Browser, DiscoveryEvent, FrameReader, FrameWriter, Tuning};
+use nexpingdesk_proto::{
     ClientPrefs, ClientSettings, ClientStatus, Control, DEFAULT_PORT, DeviceId, Features, GoodbyeReason, Hello, Input,
     LedState, MAX_CONTROL_FRAME, MAX_INPUT_FRAME, MonitorInfo, PROTOCOL_VERSION, Platform, RejectReason, stream_kind,
 };
@@ -17,7 +17,7 @@ use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use crate::{CoreError, MonitorSource, Notice};
-use glidedesk_ipc::views::{ClientSideView, LinkState, MachineView};
+use nexpingdesk_ipc::views::{ClientSideView, LinkState, MachineView};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const BACKOFF_MIN: Duration = Duration::from_millis(500);
@@ -53,7 +53,7 @@ pub struct ClientDeps {
     /// Server we connected to last time (preferred when several are found).
     pub preferred_server: Option<DeviceId>,
     /// System clipboard (`None` where unsupported).
-    pub clipboard: Option<Box<dyn glidedesk_clipboard::Clipboard>>,
+    pub clipboard: Option<Box<dyn nexpingdesk_clipboard::Clipboard>>,
 }
 
 impl std::fmt::Debug for ClientDeps {
@@ -99,7 +99,7 @@ fn with_lost_release(held: &mut Pressed, ev: Input) -> [Option<Input>; 2] {
 
 fn spawn_injector(mut inj: Box<dyn Injector>) -> std::sync::mpsc::Sender<InjectCmd> {
     let (tx, rx) = std::sync::mpsc::channel::<InjectCmd>();
-    let spawned = std::thread::Builder::new().name("gd-inject".into()).spawn(move || {
+    let spawned = std::thread::Builder::new().name("nd-inject".into()).spawn(move || {
         let mut errors = 0u32;
         let mut held = Pressed::default();
         while let Ok(cmd) = rx.recv() {
@@ -129,8 +129,8 @@ fn spawn_injector(mut inj: Box<dyn Injector>) -> std::sync::mpsc::Sender<InjectC
 }
 
 /// What the server applies here, for the window.
-fn applied(s: &ClientSettings) -> glidedesk_ipc::views::AppliedView {
-    glidedesk_ipc::views::AppliedView {
+fn applied(s: &ClientSettings) -> nexpingdesk_ipc::views::AppliedView {
+    nexpingdesk_ipc::views::AppliedView {
         mouse_speed: s.mouse_speed,
         scroll_speed: s.scroll_speed,
         scroll_invert: s.scroll_invert,
@@ -170,7 +170,7 @@ fn split_port(a: &str) -> (&str, Option<u16>) {
     }
 }
 
-/// IPv4 addresses only (Glidedesk runs on IPv4).
+/// IPv4 addresses only (Nexpingdesk runs on IPv4).
 async fn dns(host: &str, port: u16) -> Option<Vec<SocketAddr>> {
     let addrs: Vec<SocketAddr> =
         tokio::net::lookup_host((host, port)).await.ok()?.filter(SocketAddr::is_ipv4).collect();
@@ -178,14 +178,14 @@ async fn dns(host: &str, port: u16) -> Option<Vec<SocketAddr>> {
 }
 
 /// Resolves what the user typed as the server (§14 B3): an IPv4 address
-/// (`ip`, `ip:port`), or a **computer name** — matched against Glidedesk
+/// (`ip`, `ip:port`), or a **computer name** — matched against Nexpingdesk
 /// servers announced on the network (display or computer name), then
 /// `name.local` (mDNS) and DNS. Whichever answers first wins. IPv4 only.
 async fn resolve(address: &str, interface: &str) -> Result<Vec<SocketAddr>, CoreError> {
     let a = address.trim();
     let ip_only = a.trim_start_matches('[').split(']').next().unwrap_or(a);
     if a.parse::<SocketAddr>().is_ok_and(|sa| sa.is_ipv6()) || ip_only.parse::<std::net::Ipv6Addr>().is_ok() {
-        return Err(CoreError::Net(format!("'{a}' is an IPv6 address; Glidedesk uses IPv4 only")));
+        return Err(CoreError::Net(format!("'{a}' is an IPv6 address; Nexpingdesk uses IPv4 only")));
     }
     if let Ok(sa) = a.parse::<SocketAddr>() {
         return Ok(vec![sa]);
@@ -236,7 +236,7 @@ fn usable_interface(cfg: &Config) -> (String, Option<String>) {
     if name.is_empty() {
         return (String::new(), None);
     }
-    let all = glidedesk_net::list_interfaces();
+    let all = nexpingdesk_net::list_interfaces();
     match all.iter().find(|i| i.name == name) {
         Some(i) if i.up && i.addrs.iter().any(|a| a.ip.is_ipv4()) => (name.to_owned(), None),
         Some(i) => (String::new(), Some(format!("{} ({name}) is off — using any network", i.friendly_name))),
@@ -249,7 +249,7 @@ fn bind_ip(interface: &str) -> Option<IpAddr> {
     if interface.is_empty() {
         return None;
     }
-    glidedesk_net::list_interfaces()
+    nexpingdesk_net::list_interfaces()
         .into_iter()
         .find(|i| i.name == interface)
         .and_then(|i| i.addrs.into_iter().map(|a| a.ip).find(|ip| ip.is_ipv4() && !ip.is_loopback()))
@@ -259,7 +259,7 @@ fn bind_ip(interface: &str) -> Option<IpAddr> {
 /// `Ok(None)` (clean end) or the error.
 fn spawn_frames<T: serde::de::DeserializeOwned + Send + 'static>(
     mut reader: FrameReader,
-) -> mpsc::Receiver<Result<Option<T>, glidedesk_net::NetError>> {
+) -> mpsc::Receiver<Result<Option<T>, nexpingdesk_net::NetError>> {
     let (tx, rx) = mpsc::channel(1024);
     tokio::spawn(async move {
         loop {
@@ -286,7 +286,7 @@ enum SessionEnd {
 fn reject_text(r: RejectReason) -> String {
     match r {
         RejectReason::IncompatibleProtocol => {
-            "the server runs a different Glidedesk version; update both computers".into()
+            "the server runs a different Nexpingdesk version; update both computers".into()
         }
         RejectReason::Blocked => "this computer is blocked on the server".into(),
         RejectReason::NotAllowed => "the server doesn't accept this computer".into(),
@@ -530,19 +530,19 @@ impl Runner {
         let (interface, _) = usable_interface(&self.config);
         let ordered: Vec<SocketAddr> = addrs.iter().copied().filter(SocketAddr::is_ipv4).collect();
         let mut last_err = if ordered.is_empty() {
-            String::from("the server has no IPv4 address (Glidedesk uses IPv4 only)")
+            String::from("the server has no IPv4 address (Nexpingdesk uses IPv4 only)")
         } else {
             String::from("no address")
         };
         for addr in ordered {
-            let ep = match glidedesk_net::client_endpoint(bind_ip(&interface), tuning) {
+            let ep = match nexpingdesk_net::client_endpoint(bind_ip(&interface), tuning) {
                 Ok(ep) => ep,
                 Err(e) => {
                     last_err = e.to_string();
                     continue;
                 }
             };
-            match tokio::time::timeout(CONNECT_TIMEOUT, glidedesk_net::connect(&ep, addr)).await {
+            match tokio::time::timeout(CONNECT_TIMEOUT, nexpingdesk_net::connect(&ep, addr)).await {
                 Ok(Ok(conn)) => return Ok((ep, conn, addr)),
                 Ok(Err(e)) => last_err = e.to_string(),
                 Err(_) => last_err = format!("{addr}: timed out"),
@@ -602,10 +602,10 @@ impl Runner {
     fn on_input(
         &mut self,
         ev: Input,
-        guard: &mut glidedesk_input::paste::PasteGuard,
-        taken: &mpsc::Sender<glidedesk_proto::FileSetId>,
+        guard: &mut nexpingdesk_input::paste::PasteGuard,
+        taken: &mpsc::Sender<nexpingdesk_proto::FileSetId>,
     ) -> bool {
-        use glidedesk_input::paste::Verdict;
+        use nexpingdesk_input::paste::Verdict;
         let verdict = match ev {
             Input::Key { key, down } => guard.on_key(key, down, self.sync.offer_pending()),
             Input::ReleaseAll => {
@@ -666,7 +666,7 @@ impl Runner {
         if let Err(e) = control.send(&Control::Hello(self.hello())).await {
             return SessionEnd::Lost(e.to_string());
         }
-        let mut expected_proof: Option<[u8; glidedesk_net::auth::PROOF_LEN]> = None;
+        let mut expected_proof: Option<[u8; nexpingdesk_net::auth::PROOF_LEN]> = None;
         let welcome = loop {
             match tokio::time::timeout(CONNECT_TIMEOUT, reader.recv::<Control>()).await {
                 Ok(Ok(Some(Control::Welcome(w)))) => break w,
@@ -679,11 +679,11 @@ impl Runner {
                         return SessionEnd::Rejected(RejectReason::PasswordRequired);
                     }
                     let mut exporter = [0u8; 32];
-                    if conn.export_keying_material(&mut exporter, glidedesk_net::auth::EXPORTER_LABEL, b"").is_err() {
+                    if conn.export_keying_material(&mut exporter, nexpingdesk_net::auth::EXPORTER_LABEL, b"").is_err() {
                         return SessionEnd::Lost("TLS exporter unavailable".into());
                     }
                     let answer = tokio::task::spawn_blocking(move || {
-                        glidedesk_net::auth::client_answer(&password, &salt, &message, &exporter)
+                        nexpingdesk_net::auth::client_answer(&password, &salt, &message, &exporter)
                     })
                     .await;
                     let answer = match answer {
@@ -705,7 +705,7 @@ impl Runner {
         // Mutual check: a computer with a password only trusts a server that proves it too.
         if !self.config.client.password.is_empty() {
             let ok = match (&expected_proof, &welcome.auth_proof) {
-                (Some(want), Some(got)) => glidedesk_net::auth::server_proof_ok(want, got),
+                (Some(want), Some(got)) => nexpingdesk_net::auth::server_proof_ok(want, got),
                 _ => false,
             };
             if !ok {
@@ -719,7 +719,7 @@ impl Runner {
             }
         }
         let mut settings: ClientSettings = welcome.settings;
-        let (taken_tx, mut taken_rx) = mpsc::channel::<glidedesk_proto::FileSetId>(8);
+        let (taken_tx, mut taken_rx) = mpsc::channel::<nexpingdesk_proto::FileSetId>(8);
         // The first unidirectional stream is the input stream; anything else
         // (clipboard, files) is handled on its own task.
         let input = loop {
@@ -735,7 +735,7 @@ impl Runner {
             }
             self.receive_stream(kind[0], s, &conn, &settings);
         };
-        let mut paste_guard = glidedesk_input::paste::PasteGuard::new(Platform::current());
+        let mut paste_guard = nexpingdesk_input::paste::PasteGuard::new(Platform::current());
         // `FrameReader::recv` isn't cancel-safe (a frame read half-way would be lost
         // when another `select!` branch wins), so each stream gets its own reader task.
         let mut input = spawn_frames::<Input>(input);
@@ -938,7 +938,7 @@ mod tests {
 
     #[test]
     fn a_press_after_a_lost_release_is_still_a_click() {
-        use glidedesk_proto::MouseButton::{Left, Right};
+        use nexpingdesk_proto::MouseButton::{Left, Right};
         let mut held = Pressed::default();
         let run = |held: &mut Pressed, ev| with_lost_release(held, ev).into_iter().flatten().collect::<Vec<_>>();
         let press = |button, down| Input::Button { button, down };
@@ -975,7 +975,7 @@ mod tests {
     #[test]
     fn a_chosen_interface_that_does_not_exist_falls_back_to_any() {
         let mut cfg = Config::default();
-        cfg.client.interface = "gd-no-such-if0".into();
+        cfg.client.interface = "nd-no-such-if0".into();
         let (iface, note) = usable_interface(&cfg);
         assert_eq!(iface, "");
         assert!(note.unwrap().contains("using any network"));

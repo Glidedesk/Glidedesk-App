@@ -3,7 +3,7 @@
 
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
-/// macOS: Glidedesk lives in the menu bar. While its window is open it also
+/// macOS: Nexpingdesk lives in the menu bar. While its window is open it also
 /// shows in the Dock and ⌘-Tab, so the window can't get lost behind System
 /// Settings (it looked as if the app had closed, §14 B2).
 #[cfg(target_os = "macos")]
@@ -39,7 +39,7 @@ pub fn show_main(app: &AppHandle, page: Option<&str>) {
         None => "index.html".to_owned(),
     };
     let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App(url.into()))
-        .title("Glidedesk")
+        .title("Nexpingdesk")
         .inner_size(1100.0, 740.0)
         .min_inner_size(900.0, 600.0)
         .center()
@@ -73,7 +73,7 @@ pub fn show_identify(app: &AppHandle, label: &str) {
     let safe: String = label.chars().filter(|c| c.is_alphanumeric() || " -_.'()".contains(*c)).take(64).collect();
     let url = format!("index.html#/identify?label={}", encode(&safe));
     let w = WebviewWindowBuilder::new(app, "identify", WebviewUrl::App(url.into()))
-        .title("Glidedesk")
+        .title("Nexpingdesk")
         .inner_size(640.0, 260.0)
         .center()
         .decorations(false)

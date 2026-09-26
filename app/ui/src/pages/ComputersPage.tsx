@@ -81,7 +81,7 @@ export function ComputersPage({ status, config, update }: { status: AgentStatus;
     <Page title="Computers" subtitle="Every computer this server has seen. Offline ones stay here with their settings.">
       {rows.length === 0 ? (
         <EmptyState icon={<Icon.Computers size={24} />} title="No computers yet">
-          Install Glidedesk on another computer and choose <b>Client</b>. It appears here automatically and is placed on a free side of
+          Install Nexpingdesk on another computer and choose <b>Client</b>. It appears here automatically and is placed on a free side of
           this screen.
         </EmptyState>
       ) : (

@@ -66,7 +66,7 @@ export function LayoutPage({ status, config, update }: { status: AgentStatus; co
           ) : (
             <div className="space-y-3 text-muted">
               <p className="font-medium text-fg">Select a computer</p>
-              <p>New computers appear automatically when Glidedesk runs on them in Client mode, and are placed on a free side.</p>
+              <p>New computers appear automatically when Nexpingdesk runs on them in Client mode, and are placed on a free side.</p>
               <p>With several monitors, choose which monitor edges lead to each computer — one, several, or all.</p>
             </div>
           )}

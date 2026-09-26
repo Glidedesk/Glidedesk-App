@@ -5,7 +5,7 @@
 //! Control, switching desktops): no event tap ever sees that, so those gestures
 //! went on acting on this Mac while the cursor was on another computer. While
 //! grabbed, every external pointing device is therefore opened exclusively
-//! ("seized"): neither macOS nor that software gets its reports, and Glidedesk
+//! ("seized"): neither macOS nor that software gets its reports, and Nexpingdesk
 //! reads the standard ones itself — motion, buttons, wheels. When control comes
 //! back the devices are closed and belong to the system again.
 //!
@@ -24,7 +24,7 @@ use std::ffi::c_void;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use glidedesk_proto::MouseButton;
+use nexpingdesk_proto::MouseButton;
 use objc2_core_foundation::{CFRetained, CFRunLoop, CFString, kCFRunLoopCommonModes};
 use tracing::{debug, info, warn};
 
@@ -370,7 +370,7 @@ impl Seizer {
         unsafe { kCFRunLoopCommonModes }.map_or(std::ptr::null(), |m| std::ptr::from_ref(m).cast())
     }
 
-    /// Takes every external mouse (and its vendor interfaces) for Glidedesk.
+    /// Takes every external mouse (and its vendor interfaces) for Nexpingdesk.
     pub fn seize(&mut self) {
         if !self.seized.is_empty() {
             return;

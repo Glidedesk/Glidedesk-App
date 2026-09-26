@@ -4,8 +4,8 @@
 use std::collections::HashSet;
 use std::net::IpAddr;
 
-use glidedesk_proto::{DeviceId, MDNS_SERVICE, PROTOCOL_VERSION};
 use mdns_sd::{IfKind, ServiceDaemon, ServiceEvent, ServiceInfo};
+use nexpingdesk_proto::{DeviceId, MDNS_SERVICE, PROTOCOL_VERSION};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
@@ -87,7 +87,7 @@ impl Advertiser {
         daemon.disable_interface(IfKind::IPv6).map_err(mdns_err)?;
         let id_s = id.to_string();
         let instance = format!("{} ({})", clean(name), &id_s[..8]);
-        let host = format!("glidedesk-{}.local.", &id_s[..12]);
+        let host = format!("nexpingdesk-{}.local.", &id_s[..12]);
         let props = [
             ("id", id_s.as_str()),
             ("name", &clean(name)),
@@ -135,7 +135,7 @@ impl Browser {
         let rx_mdns = daemon.browse(MDNS_SERVICE).map_err(mdns_err)?;
         let (tx, rx) = mpsc::channel(32);
         std::thread::Builder::new()
-            .name("gd-mdns-browse".into())
+            .name("nd-mdns-browse".into())
             .spawn(move || {
                 while let Ok(ev) = rx_mdns.recv() {
                     let out = match ev {
@@ -189,7 +189,7 @@ fn parse(s: &mdns_sd::ResolvedService) -> Option<ServerAd> {
     }
     Some(ServerAd {
         id,
-        name: clean(props.get_property_val_str("name").unwrap_or("Glidedesk")),
+        name: clean(props.get_property_val_str("name").unwrap_or("Nexpingdesk")),
         addrs,
         port: s.port,
         protocol,

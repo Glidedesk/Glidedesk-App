@@ -6,12 +6,12 @@
 //! * clipboard: `u32 len + postcard ClipHeader`, then every part's bytes.
 //! * offer (uni): `u32 len + postcard FileOffer` — copied files, no data (§14.2).
 //! * fetch (bi, opened by the receiver on paste): `u64 set id` out,
-//!   `glidedesk_transfer::send_set` data back.
+//!   `nexpingdesk_transfer::send_set` data back.
 //!
 //! Files never move by themselves: the receiver's paste shortcut is held,
 //! the set is fetched into staging, put on the clipboard, and the paste is
 //! replayed so the file manager copies it. Files that were already on the
-//! clipboard when Glidedesk started, or were copied over an hour ago, are not
+//! clipboard when Nexpingdesk started, or were copied over an hour ago, are not
 //! offered at all. Every step is written to a short activity log (shown in
 //! the window) so it is always clear what moved, where to and why.
 
@@ -21,10 +21,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use glidedesk_clipboard::{ClipData, Clipboard};
-use glidedesk_ipc::views::{ActivityTone, ActivityView};
-use glidedesk_proto::{ClipFormat, ClipHeader, DeviceId, FileOffer, FileSetId, MAX_CLIPBOARD_BYTES, stream_kind};
-use glidedesk_transfer::{Manifest, Staging, build_manifest, receive_set, send_set};
+use nexpingdesk_clipboard::{ClipData, Clipboard};
+use nexpingdesk_ipc::views::{ActivityTone, ActivityView};
+use nexpingdesk_proto::{ClipFormat, ClipHeader, DeviceId, FileOffer, FileSetId, MAX_CLIPBOARD_BYTES, stream_kind};
+use nexpingdesk_transfer::{Manifest, Staging, build_manifest, receive_set, send_set};
 use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
@@ -70,7 +70,7 @@ const MAX_ACTIVITY: usize = 40;
 struct Seen {
     seq: u64,
     since: std::time::Instant,
-    /// It was already there when Glidedesk started (age unknown).
+    /// It was already there when Nexpingdesk started (age unknown).
     before_start: bool,
 }
 
@@ -164,7 +164,7 @@ impl Sync {
     /// Adds a line to the activity log (and the agent log).
     pub fn note(&self, tone: ActivityTone, text: impl Into<String>) {
         let text = text.into();
-        info!(target: "glidedesk_core::clipboard", "{text}");
+        info!(target: "nexpingdesk_core::clipboard", "{text}");
         let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let mut log = lock(&self.activity);
         log.push_front(ActivityView { at, text, tone });
@@ -195,7 +195,7 @@ impl Sync {
             return None; // changed since the last sample: just copied
         }
         if seen.before_start {
-            Some("it was already on the clipboard when Glidedesk started")
+            Some("it was already on the clipboard when Nexpingdesk started")
         } else if seen.since.elapsed() > MAX_FILE_AGE {
             Some("it was copied over an hour ago")
         } else {
@@ -474,7 +474,7 @@ impl Sync {
             // to `receive_set`, so an empty offer may send at most 1 byte.
             let manifest = receive_set(&mut recv, &dir, p.offer.total_bytes.max(1), progress.clone()).await.map_err(
                 |e| match e {
-                    glidedesk_transfer::TransferError::Net(_) => {
+                    nexpingdesk_transfer::TransferError::Net(_) => {
                         format!("{name} is no longer available on {}", p.peer)
                     }
                     other => other.to_string(),
@@ -498,7 +498,7 @@ impl Sync {
             self.note(ActivityTone::Info, format!("{name}: cancelled — something else was copied meanwhile"));
             return Ok(None);
         }
-        let roots = glidedesk_transfer::staging::roots_in(&dir, &manifest.roots());
+        let roots = nexpingdesk_transfer::staging::roots_in(&dir, &manifest.roots());
         let cut = p.offer.cut;
         let data = ClipData { files: roots.clone(), cut, ..ClipData::default() };
         self.write_local(&clip, data, p.origin).await?;
@@ -644,7 +644,7 @@ impl Sync {
                 return Err("the files changed after they were copied; originals kept".to_owned());
             }
             for p in &originals {
-                glidedesk_platform::move_to_trash(p)?;
+                nexpingdesk_platform::move_to_trash(p)?;
             }
             Ok(originals.len())
         })
@@ -807,12 +807,12 @@ mod tests {
 
     #[test]
     fn files_already_copied_at_start_are_stale_until_the_clipboard_changes() {
-        let mut clip = glidedesk_clipboard::mock::MockClipboard::default();
+        let mut clip = nexpingdesk_clipboard::mock::MockClipboard::default();
         clip.write(&ClipData { text: Some("old".into()), ..ClipData::default() }).unwrap();
         let shared = clip.clone();
         let sync = Sync::new(Some(Box::new(clip)));
         let seq = shared.sequence();
-        assert!(sync.stale(seq).is_some(), "on the clipboard before Glidedesk started");
+        assert!(sync.stale(seq).is_some(), "on the clipboard before Nexpingdesk started");
         let mut c = shared.clone();
         c.write(&ClipData { text: Some("new".into()), ..ClipData::default() }).unwrap();
         assert!(sync.stale(shared.sequence()).is_none(), "changed since: just copied");
@@ -822,7 +822,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_closed_link_ends_the_echo_guard_for_that_peer_only() {
-        let clip = glidedesk_clipboard::mock::MockClipboard::default();
+        let clip = nexpingdesk_clipboard::mock::MockClipboard::default();
         let sync = Sync::new(Some(Box::new(clip.clone())));
         let (a, b) = (DeviceId([1; 16]), DeviceId([2; 16]));
         let shared = sync.clip.clone().unwrap();

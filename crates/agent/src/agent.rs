@@ -4,10 +4,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use glidedesk_config::{Config, ConfigStore, ExportScope, ImportOptions, Role};
-use glidedesk_core::{ClientCommand, ClientHandle, Notice, ServerCommand, ServerHandle, client, server};
-use glidedesk_ipc::{AgentStatus, Event, NoticeView, PermissionsView, Request};
-use glidedesk_proto::{DeviceId, GoodbyeReason, Platform};
+use nexpingdesk_config::{Config, ConfigStore, ExportScope, ImportOptions, Role};
+use nexpingdesk_core::{ClientCommand, ClientHandle, Notice, ServerCommand, ServerHandle, client, server};
+use nexpingdesk_ipc::{AgentStatus, Event, NoticeView, PermissionsView, Request};
+use nexpingdesk_proto::{DeviceId, GoodbyeReason, Platform};
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, mpsc, watch};
 use tracing::{error, info, warn};
@@ -42,7 +42,7 @@ pub struct Agent {
     /// Asking the OS on every status update cost a query to the permission
     /// database (macOS) or a new X11 connection (Linux) each time — at least
     /// once a second, as link latency changes.
-    perms: glidedesk_input::Permissions,
+    perms: nexpingdesk_input::Permissions,
     /// Last start failure already reported (retries don't repeat the notice).
     last_failure: Option<String>,
 }
@@ -55,7 +55,7 @@ impl Agent {
         log_dir: String,
     ) -> Result<Self, String> {
         let mut loaded = store.load_or_create().map_err(|e| e.to_string())?;
-        if loaded.created && std::env::var_os("GLIDEDESK_PORTABLE").is_some() {
+        if loaded.created && std::env::var_os("NEXPINGDESK_PORTABLE").is_some() {
             // A portable copy doesn't register itself at login unless asked to.
             loaded.config.general.start_at_login = false;
             if let Err(e) = store.save(&loaded.config) {
@@ -84,13 +84,13 @@ impl Agent {
             events,
             log_dir,
             permissions_ready: None,
-            perms: glidedesk_input::permissions(),
+            perms: nexpingdesk_input::permissions(),
             last_failure: None,
         })
     }
 
     fn host_name() -> String {
-        glidedesk_platform::host_name()
+        nexpingdesk_platform::host_name()
     }
 
     // -----------------------------------------------------------------------
@@ -102,11 +102,11 @@ impl Agent {
             return;
         }
         self.error = None;
-        let monitors: glidedesk_core::MonitorSource = Arc::new(glidedesk_input::monitors);
+        let monitors: nexpingdesk_core::MonitorSource = Arc::new(nexpingdesk_input::monitors);
         match self.config.device.role {
             Role::Unset => return,
             Role::Server => {
-                let capture = match glidedesk_input::start_capture() {
+                let capture = match nexpingdesk_input::start_capture() {
                     Ok(c) => c,
                     Err(e) => {
                         self.fail(format!("cannot capture the keyboard and mouse: {e}"));
@@ -131,7 +131,7 @@ impl Agent {
                 }
             }
             Role::Client => {
-                let injector = match glidedesk_input::injector() {
+                let injector = match nexpingdesk_input::injector() {
                     Ok(i) => i,
                     Err(e) => {
                         self.fail(format!("cannot control this computer's input: {e}"));
@@ -141,7 +141,7 @@ impl Agent {
                 let deps = client::ClientDeps {
                     injector,
                     monitors,
-                    status: Arc::new(glidedesk_platform::session_status),
+                    status: Arc::new(nexpingdesk_platform::session_status),
                     app_version: VERSION.into(),
                     host_name: Self::host_name(),
                     preferred_server: self.state.state.last_server,
@@ -157,8 +157,8 @@ impl Agent {
     }
 
     /// System clipboard; a failure is reported instead of silently disabling sync.
-    fn clipboard(&self) -> Option<Box<dyn glidedesk_clipboard::Clipboard>> {
-        match glidedesk_clipboard::system() {
+    fn clipboard(&self) -> Option<Box<dyn nexpingdesk_clipboard::Clipboard>> {
+        match nexpingdesk_clipboard::system() {
             Ok(c) => Some(c),
             Err(e) => {
                 warn!(error = %e, "clipboard unavailable");
@@ -315,7 +315,7 @@ impl Agent {
     /// rights); revoked → stop with a clear message instead of leaking input.
     async fn on_permission_tick(&mut self) {
         let server = self.config.device.role == Role::Server;
-        self.perms = glidedesk_input::permissions();
+        self.perms = nexpingdesk_input::permissions();
         let ready = self.perms.ready(server);
         let was = self.permissions_ready.replace(ready);
         if self.stopped || self.config.device.role == Role::Unset {
@@ -330,7 +330,7 @@ impl Agent {
                 warn!("permission revoked; stopping sharing");
                 self.stop_runtime(GoodbyeReason::Stopping).await;
                 self.fail(if cfg!(target_os = "macos") {
-                    "Accessibility permission was turned off; allow Glidedesk in System Settings → Privacy & Security → Accessibility".into()
+                    "Accessibility permission was turned off; allow Nexpingdesk in System Settings → Privacy & Security → Accessibility".into()
                 } else {
                     "access to the keyboard and mouse was lost; see Advanced → Self-test".into()
                 });
@@ -415,7 +415,7 @@ impl Agent {
     /// kept (the window may have loaded before they joined); only `removed` go.
     async fn apply_config(&mut self, mut new: Config, removed: &[DeviceId]) -> Result<Value, String> {
         if self.read_only {
-            return Err("settings were written by a newer Glidedesk and are read-only".into());
+            return Err("settings were written by a newer Nexpingdesk and are read-only".into());
         }
         new.device.id = self.config.device.id; // identity is never changed through the UI
         let kept = new.keep_known_clients(&self.config, removed);
@@ -530,13 +530,13 @@ impl Agent {
                 let _ = self.events.send(Event::ConfigChanged);
                 out
             }
-            Request::ListInterfaces => Ok(to_json(&glidedesk_net::list_interfaces())),
+            Request::ListInterfaces => Ok(to_json(&nexpingdesk_net::list_interfaces())),
             Request::ExportConfig { layout_only } => {
                 let scope = if layout_only { ExportScope::LayoutOnly } else { ExportScope::Full };
-                glidedesk_config::export(&self.config, scope, VERSION).map(Value::String).map_err(|e| e.to_string())
+                nexpingdesk_config::export(&self.config, scope, VERSION).map(Value::String).map_err(|e| e.to_string())
             }
             Request::ImportPreview { text } => {
-                let p = glidedesk_config::import(&text, &self.config, ImportOptions::default())
+                let p = nexpingdesk_config::import(&text, &self.config, ImportOptions::default())
                     .map_err(|e| e.to_string())?;
                 Ok(json!({
                     "config": p.config,
@@ -553,14 +553,14 @@ impl Agent {
                 Ok(Value::Null)
             }
             Request::RequestPermissions => {
-                glidedesk_input::request_permissions();
+                nexpingdesk_input::request_permissions();
                 Ok(Value::Null)
             }
             Request::Wake { id } => {
                 let entry = self.config.server.client(&id).ok_or("unknown client")?;
-                let mac = glidedesk_platform::parse_mac(&entry.mac_address)
+                let mac = nexpingdesk_platform::parse_mac(&entry.mac_address)
                     .ok_or("set this computer's MAC address first (Computers → Wake-on-LAN)")?;
-                glidedesk_platform::wake_on_lan(mac).map_err(|e| e.to_string())?;
+                nexpingdesk_platform::wake_on_lan(mac).map_err(|e| e.to_string())?;
                 Ok(Value::Null)
             }
             Request::SelfTest => Ok(crate::selftest::run(matches!(self.runtime, Runtime::Server(_)))),
@@ -581,12 +581,12 @@ impl Agent {
                     if password.chars().count() > 256 {
                         return Err("the password is too long (256 characters at most)".into());
                     }
-                    let v = tokio::task::spawn_blocking(move || glidedesk_net::auth::Verifier::new(&password))
+                    let v = tokio::task::spawn_blocking(move || nexpingdesk_net::auth::Verifier::new(&password))
                         .await
                         .map_err(|e| e.to_string())?
                         .map_err(|e| e.to_string())?;
                     let (salt, key) = v.to_hex();
-                    Some(glidedesk_config::StoredPassword { salt, key })
+                    Some(nexpingdesk_config::StoredPassword { salt, key })
                 };
                 // Network settings changed: sharing restarts and every client signs in again.
                 let out = self.apply_config(cfg, &[]).await;

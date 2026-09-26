@@ -1,4 +1,4 @@
-//! Glidedesk core: the server hub (capture → engine → network), the client
+//! Nexpingdesk core: the server hub (capture → engine → network), the client
 //! runtime (network → injection) and connection health.
 
 #![forbid(unsafe_code)]
@@ -12,13 +12,13 @@ pub mod transfers;
 
 use std::sync::Arc;
 
-use glidedesk_config::Config;
-use glidedesk_input::InputError;
-use glidedesk_proto::{DeviceId, MonitorInfo};
+use nexpingdesk_config::Config;
+use nexpingdesk_input::InputError;
+use nexpingdesk_proto::{DeviceId, MonitorInfo};
 
 pub use client::{ClientCommand, ClientDeps, ClientHandle};
-pub use glidedesk_ipc::views::{ClientSideView, ClientView, HealthState, LinkState, ServerView};
 pub use health::HealthConfig;
+pub use nexpingdesk_ipc::views::{ClientSideView, ClientView, HealthState, LinkState, ServerView};
 pub use server::{ServerCommand, ServerDeps, ServerHandle};
 
 /// Returns this machine's monitors (platform function, or a mock in tests).

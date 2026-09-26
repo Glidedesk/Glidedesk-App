@@ -1,6 +1,6 @@
 [package]
-name = "glidedesk-proto"
-description = "Glidedesk wire protocol"
+name = "nexpingdesk-proto"
+description = "Nexpingdesk wire protocol"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

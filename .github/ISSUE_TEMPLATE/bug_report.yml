@@ -19,7 +19,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Glidedesk version
+      label: Nexpingdesk version
       description: Computers → Version, or the file name you installed.
     validations: { required: true }
   - type: textarea

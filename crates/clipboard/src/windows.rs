@@ -58,7 +58,7 @@ impl WinClipboard {
         let (jobs_tx, jobs_rx) = mpsc::channel::<Job>();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<u32, ClipError>>();
         std::thread::Builder::new()
-            .name("gd-clipboard".into())
+            .name("nd-clipboard".into())
             .spawn(move || worker(&jobs_rx, &ready_tx))
             .map_err(|e| ClipError::Os(e.to_string()))?;
         let thread_id = ready_rx
@@ -110,13 +110,13 @@ fn worker(jobs: &mpsc::Receiver<Job>, ready: &mpsc::Sender<Result<u32, ClipError
         let class = WNDCLASSW {
             lpfnWndProc: Some(wndproc),
             hInstance: instance,
-            lpszClassName: w!("GlidedeskClipboard"),
+            lpszClassName: w!("NexpingdeskClipboard"),
             ..Default::default()
         };
         RegisterClassW(&raw const class);
         CreateWindowExW(
             WINDOW_EX_STYLE(0),
-            w!("GlidedeskClipboard"),
+            w!("NexpingdeskClipboard"),
             w!(""),
             WS_POPUP,
             0,

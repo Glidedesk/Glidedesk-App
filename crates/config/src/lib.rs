@@ -1,4 +1,4 @@
-//! Glidedesk configuration: schema, protected storage, migration,
+//! Nexpingdesk configuration: schema, protected storage, migration,
 //! validation and export/import.
 
 #![forbid(unsafe_code)]
@@ -14,7 +14,7 @@ pub mod validate;
 pub use cidr::{Cidr, IpFilter};
 pub use export::{ExportScope, ImportOptions, ImportPreview, export, import};
 pub use schema::*;
-pub use store::{ConfigError, ConfigStore, Loaded};
+pub use store::{APP_DIR_NAME, ConfigError, ConfigStore, LEGACY_APP_DIR_NAME, Loaded, take_over_legacy};
 pub use validate::Issue;
 
 #[doc(hidden)]

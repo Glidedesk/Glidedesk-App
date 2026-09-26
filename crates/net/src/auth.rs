@@ -16,12 +16,12 @@ pub const SALT_LEN: usize = 16;
 pub const KEY_LEN: usize = 32;
 pub const PROOF_LEN: usize = 32;
 /// Label for `Connection::export_keying_material`.
-pub const EXPORTER_LABEL: &[u8] = b"EXPORTER-glidedesk-auth-v1";
+pub const EXPORTER_LABEL: &[u8] = b"EXPORTER-nexpingdesk-auth-v1";
 /// Longest SPAKE2 message we accept (Ed25519: 33 bytes).
 pub const MAX_MSG: usize = 64;
 
-const ID_CLIENT: &[u8] = b"glidedesk client";
-const ID_SERVER: &[u8] = b"glidedesk server";
+const ID_CLIENT: &[u8] = b"nexpingdesk client";
+const ID_SERVER: &[u8] = b"nexpingdesk server";
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum AuthError {

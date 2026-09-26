@@ -1,5 +1,5 @@
 [package]
-name = "glidedesk-input"
+name = "nexpingdesk-input"
 description = "Keyboard/mouse capture and injection, displays, permissions"
 version.workspace = true
 edition.workspace = true
@@ -8,9 +8,9 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-glidedesk-config.workspace = true
-glidedesk-layout.workspace = true
-glidedesk-proto.workspace = true
+nexpingdesk-config.workspace = true
+nexpingdesk-layout.workspace = true
+nexpingdesk-proto.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

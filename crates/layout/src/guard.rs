@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use glidedesk_proto::{DeviceId, Side};
+use nexpingdesk_proto::{DeviceId, Side};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

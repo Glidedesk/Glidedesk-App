@@ -96,11 +96,11 @@ export function NetworkPage({ status, config, update }: { status: AgentStatus; c
     const chosen = ifaces.find((i) => i.name === config.client.interface);
     const chosenOff = config.client.interface !== "" && ifaces.length > 0 && (!chosen || !chosen.up);
     return (
-      <Page title="Network" subtitle="How this computer reaches the server. Glidedesk uses IPv4 only." actions={<Button onClick={() => void refresh()}>Refresh</Button>}>
+      <Page title="Network" subtitle="How this computer reaches the server. Nexpingdesk uses IPv4 only." actions={<Button onClick={() => void refresh()}>Refresh</Button>}>
         {error && <Callout tone="bad">{error}</Callout>}
         {chosenOff && (
           <Callout tone="warn">
-            {chosen ? `${chosen.friendly_name} is off` : `${config.client.interface} is not connected`} — Glidedesk uses any other network until it is back.
+            {chosen ? `${chosen.friendly_name} is off` : `${config.client.interface} is not connected`} — Nexpingdesk uses any other network until it is back.
           </Callout>
         )}
         <Section title="Interface" description="Leave on Any unless the server must be reached through one specific network. If that network is off, any other one is used.">
@@ -130,7 +130,7 @@ export function NetworkPage({ status, config, update }: { status: AgentStatus; c
   const toggle = (list: string[], v: string, on: boolean) => (on ? [...new Set([...list, v])] : list.filter((x) => x !== v));
   const netNotes = (status.server?.warnings ?? []).filter((w) => w.startsWith("Network: ")).map((w) => w.slice("Network: ".length));
   return (
-    <Page title="Network" subtitle="Where this server listens for its computers. Glidedesk uses IPv4 only." actions={<Button onClick={() => void refresh()}>Refresh</Button>}>
+    <Page title="Network" subtitle="Where this server listens for its computers. Nexpingdesk uses IPv4 only." actions={<Button onClick={() => void refresh()}>Refresh</Button>}>
       {error && <Callout tone="bad">{error}</Callout>}
       {netNotes.map((n) => (
         <Callout key={n} tone="warn">

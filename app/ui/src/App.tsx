@@ -53,7 +53,7 @@ function Loading({ error }: { error: string | null }) {
       <div className="flex h-16 w-16 items-center justify-center rounded-[20px] bg-gradient-to-b from-accent-2 to-accent text-white shadow-lg">
         <Icon.Logo size={34} />
       </div>
-      <div className="text-[17px] font-semibold">Glidedesk</div>
+      <div className="text-[17px] font-semibold">Nexpingdesk</div>
       {error ? (
         <div className="max-w-md">
           <Callout tone="bad">{error}</Callout>

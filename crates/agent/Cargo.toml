@@ -1,6 +1,6 @@
 [package]
-name = "glidedesk-agent"
-description = "Glidedesk background agent (input sharing runtime)"
+name = "nexpingdesk-agent"
+description = "Nexpingdesk background agent (input sharing runtime)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,14 +11,14 @@ publish.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
-glidedesk-clipboard.workspace = true
-glidedesk-config.workspace = true
-glidedesk-core.workspace = true
-glidedesk-input.workspace = true
-glidedesk-ipc.workspace = true
-glidedesk-net.workspace = true
-glidedesk-platform.workspace = true
-glidedesk-proto.workspace = true
+nexpingdesk-clipboard.workspace = true
+nexpingdesk-config.workspace = true
+nexpingdesk-core.workspace = true
+nexpingdesk-input.workspace = true
+nexpingdesk-ipc.workspace = true
+nexpingdesk-net.workspace = true
+nexpingdesk-platform.workspace = true
+nexpingdesk-proto.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

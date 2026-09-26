@@ -2,8 +2,8 @@
 //! Windows PC (or the reverse) Cmd and Ctrl swap by default, so muscle memory
 //! (Cmd+C / Ctrl+C) keeps working.
 
-use glidedesk_config::RemapPreset;
-use glidedesk_proto::{KeyCode, Platform};
+use nexpingdesk_config::RemapPreset;
+use nexpingdesk_proto::{KeyCode, Platform};
 
 use crate::keymap::hid;
 

@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
-use glidedesk_proto::{Input, KeyCode, LedState, MonitorId, MonitorInfo, MouseButton, Point, Rect};
+use nexpingdesk_proto::{Input, KeyCode, LedState, MonitorId, MonitorInfo, MouseButton, Point, Rect};
 use objc2_core_foundation::{CFMachPort, CFRetained, CFRunLoop, CGPoint, kCFRunLoopCommonModes};
 use objc2_core_graphics::{
     CGAssociateMouseAndMouseCursorPosition, CGDirectDisplayID, CGDisplayBounds, CGDisplayCopyDisplayMode,
@@ -172,9 +172,9 @@ unsafe extern "C" {
     fn AXIsProcessTrusted() -> bool;
 }
 
-/// Shows macOS's "“Glidedesk” would like to control this computer" prompt and
+/// Shows macOS's "“Nexpingdesk” would like to control this computer" prompt and
 /// adds the app to the Accessibility list. Call it from the app process (the one
-/// macOS knows as Glidedesk), not from the background agent.
+/// macOS knows as Nexpingdesk), not from the background agent.
 ///
 /// Accessibility first: an *active* event tap and posting events both fall
 /// under it. Once it is there, Input Monitoring (optional) for taking external
@@ -305,7 +305,7 @@ impl Shared {
     /// Recreates both taps in front of every other tap at their location.
     ///
     /// Taps run newest first. Mouse software (Logi Options+, `SteerMouse`,
-    /// `BetterTouchTool`, …) started after Glidedesk — at login, or restarted
+    /// `BetterTouchTool`, …) started after Nexpingdesk — at login, or restarted
     /// by its updater — would see an external mouse's extra buttons before our
     /// tap swallows them and act on them here as well: Back/Forward went back
     /// on both computers. In front again, ours swallows them first while another
@@ -628,7 +628,7 @@ unsafe extern "C-unwind" fn session_callback(
 
 /// macOS turns a tap off when it is too slow or on user input: turn it back on.
 ///
-/// Each tap is told about its own disabling, including the times Glidedesk
+/// Each tap is told about its own disabling, including the times Nexpingdesk
 /// switched it off itself: the session tap is off while this Mac has control,
 /// and switching it off makes macOS report that too. Only a tap that should be
 /// on and is off is switched back on, and only that is an interruption. Setting
@@ -825,7 +825,7 @@ fn start_taps() -> Result<(Arc<Shared>, mpsc::Receiver<CaptureEvent>), InputErro
     let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), InputError>>();
     let thread_shared = shared.clone();
     std::thread::Builder::new()
-        .name("gd-capture".into())
+        .name("nd-capture".into())
         .spawn(move || {
             let user = Arc::into_raw(thread_shared.clone()) as *mut c_void;
             let Some(rl) = CFRunLoop::current() else {
@@ -1147,7 +1147,7 @@ pub fn fullscreen_app() -> Option<String> {
             .and_then(|v| v.downcast_ref::<CFString>())
             .map(|n| n.to_string().to_lowercase())
             .unwrap_or_default();
-        if name == "glidedesk" {
+        if name == "nexpingdesk" {
             return None;
         }
         let covers = dicts
@@ -1169,9 +1169,9 @@ mod tests {
     use super::*;
 
     /// A real event tap takes over this Mac's keyboard and cursor while grabbed:
-    /// only where asked for (the macOS CI runner sets `GLIDEDESK_TAP_TESTS`).
+    /// only where asked for (the macOS CI runner sets `NEXPINGDESK_TAP_TESTS`).
     fn enabled() -> bool {
-        std::env::var_os("GLIDEDESK_TAP_TESTS").is_some()
+        std::env::var_os("NEXPINGDESK_TAP_TESTS").is_some()
     }
 
     /// One test, run in order: the checks post real events, and a grabbed tap

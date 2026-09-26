@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Mutex, PoisonError};
 
-use glidedesk_proto::KeyCode;
+use nexpingdesk_proto::KeyCode;
 
 use crate::paste::{PasteGuard, Verdict};
 
@@ -31,7 +31,7 @@ impl Default for KeyGate {
             inner: Mutex::new(Inner {
                 held: HashSet::new(),
                 passthrough: HashSet::new(),
-                paste: PasteGuard::new(glidedesk_proto::Platform::current()),
+                paste: PasteGuard::new(nexpingdesk_proto::Platform::current()),
             }),
             paste_hold: AtomicBool::new(false),
             buttons: AtomicU32::new(0),

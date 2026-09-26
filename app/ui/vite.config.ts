@@ -4,7 +4,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { agentBridge } from "./dev/agent-bridge";
 
 export default defineConfig({
-  // agentBridge: dev server only, off unless GLIDEDESK_DEV_AGENTS is set (browser QA).
+  // agentBridge: dev server only, off unless NEXPINGDESK_DEV_AGENTS is set (browser QA).
   plugins: [react(), tailwindcss(), agentBridge()],
   clearScreen: false,
   build: {

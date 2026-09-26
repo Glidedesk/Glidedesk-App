@@ -19,7 +19,7 @@ pub fn schema_version(table: &Table) -> u32 {
 /// `STEPS[i]` migrates version `i + 1` to `i + 2`.
 const STEPS: &[fn(&mut Table)] = &[v1_to_v2, v2_to_v3, v3_to_v4];
 
-/// v4: Glidedesk runs on IPv4 only. The IPv6 switches go, and IPv6 listen
+/// v4: Nexpingdesk runs on IPv4 only. The IPv6 switches go, and IPv6 listen
 /// addresses are dropped (they could never be bound again).
 fn v3_to_v4(t: &mut Table) {
     if let Some(net) = t.get_mut("server").and_then(|s| s.get_mut("network")).and_then(toml::Value::as_table_mut) {

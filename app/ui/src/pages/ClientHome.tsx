@@ -32,7 +32,7 @@ export function ClientHome({ status, config, update }: { status: AgentStatus; co
   return (
     <Page
       title="This computer"
-      subtitle="Controlled by a Glidedesk server on your network."
+      subtitle="Controlled by a Nexpingdesk server on your network."
       actions={
         <>
           <Button icon={<Icon.Refresh size={16} />} onClick={() => void run(() => api.reconnectAll())}>

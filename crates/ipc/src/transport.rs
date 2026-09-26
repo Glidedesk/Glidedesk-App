@@ -2,7 +2,7 @@
 //!
 //! * macOS/Linux: Unix socket inside the per-user config directory (`0700`),
 //!   so only the owning user can connect.
-//! * Windows: named pipe `\\.\pipe\glidedesk-agent-<user>` with a DACL that
+//! * Windows: named pipe `\\.\pipe\nexpingdesk-agent-<user>` with a DACL that
 //!   grants access only to the owner and SYSTEM, remote clients rejected.
 
 use std::io;
@@ -21,9 +21,9 @@ impl Endpoint {
     pub fn default_for_user() -> io::Result<Self> {
         #[cfg(unix)]
         {
-            let store = glidedesk_config::ConfigStore::default_location()
+            let store = nexpingdesk_config::ConfigStore::default_location()
                 .map_err(|e| io::Error::new(io::ErrorKind::NotFound, e.to_string()))?;
-            glidedesk_config::store::create_private_dir(store.dir())
+            nexpingdesk_config::store::create_private_dir(store.dir())
                 .map_err(|e| io::Error::new(io::ErrorKind::PermissionDenied, e.to_string()))?;
             Ok(Self(store.dir().join("agent.sock").to_string_lossy().into_owned()))
         }
@@ -35,13 +35,13 @@ impl Endpoint {
                 .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
                 .take(64)
                 .collect();
-            // A separate $GLIDEDESK_HOME instance gets its own pipe.
-            let suffix = std::env::var("GLIDEDESK_HOME")
+            // A separate $NEXPINGDESK_HOME instance gets its own pipe.
+            let suffix = std::env::var("NEXPINGDESK_HOME")
                 .ok()
                 .filter(|h| !h.is_empty())
                 .map(|h| format!("-{:08x}", h.bytes().fold(0u32, |a, b| a.rotate_left(5) ^ u32::from(b))))
                 .unwrap_or_default();
-            Ok(Self(format!(r"\\.\pipe\glidedesk-agent-{user}{suffix}")))
+            Ok(Self(format!(r"\\.\pipe\nexpingdesk-agent-{user}{suffix}")))
         }
     }
 }

@@ -1,20 +1,20 @@
 //! `cargo xtask <command>` — build and packaging automation.
-//! Runs inside the `glidedesk-builder` container locally and directly on the
+//! Runs inside the `nexpingdesk-builder` container locally and directly on the
 //! GitHub runners in CI. Output goes to `output-build/`.
 //!
 //! Commands:
 //!   ui                         build the web UI (pnpm)
 //!   check-cross <targets…>     clippy for each cross target
-//!   package macos              Apple Silicon Glidedesk.app + .dmg (+ uninstaller)
+//!   package macos              Apple Silicon Nexpingdesk.app + .dmg (+ uninstaller)
 //!   package windows            x64 NSIS installers (standard + offline WebView2)
 //!   package linux              .deb / .rpm / .tar.gz for this machine's architecture
 //!   checksums                  SHA256SUMS (+ minisign signature when a key is set)
 //!   release                    everything this host can build + checksums
 //!
 //! Signing (all optional; see scripts/generate-signing-keys.sh):
-//!   GLIDEDESK_MAC_P12 + GLIDEDESK_MAC_P12_PASSWORD     self-signed macOS identity
-//!   GLIDEDESK_WIN_PFX + GLIDEDESK_WIN_PFX_PASSWORD     self-signed Authenticode cert
-//!   GLIDEDESK_MINISIGN_KEY                             minisign secret key (no password)
+//!   NEXPINGDESK_MAC_P12 + NEXPINGDESK_MAC_P12_PASSWORD     self-signed macOS identity
+//!   NEXPINGDESK_WIN_PFX + NEXPINGDESK_WIN_PFX_PASSWORD     self-signed Authenticode cert
+//!   NEXPINGDESK_MINISIGN_KEY                             minisign secret key (no password)
 
 #![allow(clippy::doc_markdown)] // env var names in docs
 
@@ -26,8 +26,8 @@ use std::process::{Command, ExitCode};
 
 type Result<T = ()> = std::result::Result<T, String>;
 
-const APP_ID: &str = "app.glidedesk.desktop";
-const PRODUCT: &str = "Glidedesk";
+const APP_ID: &str = "app.nexpingdesk.desktop";
+const PRODUCT: &str = "Nexpingdesk";
 const MAC_TARGET: &str = "aarch64-apple-darwin";
 const WIN_TARGET: &str = "x86_64-pc-windows-msvc";
 
@@ -44,11 +44,11 @@ fn target_dir() -> PathBuf {
 }
 
 fn cache_dir() -> PathBuf {
-    env::var_os("GLIDEDESK_CACHE").map_or_else(|| target_dir().join("gd-cache"), PathBuf::from)
+    env::var_os("NEXPINGDESK_CACHE").map_or_else(|| target_dir().join("nd-cache"), PathBuf::from)
 }
 
 fn version() -> String {
-    if let Ok(v) = env::var("GLIDEDESK_VERSION")
+    if let Ok(v) = env::var("NEXPINGDESK_VERSION")
         && !v.is_empty()
     {
         return v.trim_start_matches('v').to_owned();
@@ -129,13 +129,21 @@ fn check_cross(targets: &[String]) -> Result {
     Ok(())
 }
 
-/// Release build of the single `glidedesk` executable (the agent is a library inside it).
+/// Release build of the single `nexpingdesk` executable (the agent is a library inside it).
 fn cargo_build(target: Option<&str>) -> Result<PathBuf> {
     let mut c = sh("cargo");
     if target.is_some_and(|t| t.contains("windows")) {
         c.arg("xwin");
     }
-    c.args(["build", "--release", "--locked", "-p", "glidedesk-app", "--features", "glidedesk-app/custom-protocol"]);
+    c.args([
+        "build",
+        "--release",
+        "--locked",
+        "-p",
+        "nexpingdesk-app",
+        "--features",
+        "nexpingdesk-app/custom-protocol",
+    ]);
     if let Some(t) = target {
         c.args(["--target", t]);
     }
@@ -144,7 +152,7 @@ fn cargo_build(target: Option<&str>) -> Result<PathBuf> {
         Some(t) => target_dir().join(t).join("release"),
         None => target_dir().join("release"),
     };
-    let exe = dir.join(if target.is_some_and(|t| t.contains("windows")) { "glidedesk.exe" } else { "glidedesk" });
+    let exe = dir.join(if target.is_some_and(|t| t.contains("windows")) { "nexpingdesk.exe" } else { "nexpingdesk" });
     if !exe.is_file() {
         return Err(format!("build produced no {}", exe.display()));
     }
@@ -159,26 +167,26 @@ fn cargo_build(target: Option<&str>) -> Result<PathBuf> {
 fn mac_sign(path: &Path, identifier: &str) -> Result {
     let mut c = Command::new("rcodesign");
     c.args(["sign", "--binary-identifier", identifier, "--code-signature-flags", "runtime"]);
-    match (env_path("GLIDEDESK_MAC_P12"), env::var("GLIDEDESK_MAC_P12_PASSWORD")) {
+    match (env_path("NEXPINGDESK_MAC_P12"), env::var("NEXPINGDESK_MAC_P12_PASSWORD")) {
         (Some(p12), Ok(pw)) => {
             c.arg("--p12-file").arg(p12).arg("--p12-password").arg(pw);
         }
-        _ => eprintln!("  (no GLIDEDESK_MAC_P12: ad-hoc signature)"),
+        _ => eprintln!("  (no NEXPINGDESK_MAC_P12: ad-hoc signature)"),
     }
     run(c.arg(path))
 }
 
 fn win_signing_enabled() -> bool {
-    env_path("GLIDEDESK_WIN_PFX").is_some() && env::var("GLIDEDESK_WIN_PFX_PASSWORD").is_ok()
+    env_path("NEXPINGDESK_WIN_PFX").is_some() && env::var("NEXPINGDESK_WIN_PFX_PASSWORD").is_ok()
 }
 
 /// Windows: Authenticode with the self-signed certificate (in place).
 fn win_sign(path: &Path) -> Result {
     if !win_signing_enabled() {
-        eprintln!("  (no GLIDEDESK_WIN_PFX: {} left unsigned)", path.display());
+        eprintln!("  (no NEXPINGDESK_WIN_PFX: {} left unsigned)", path.display());
         return Ok(());
     }
-    run(Command::new("gd-sign-windows").arg(path))
+    run(Command::new("nd-sign-windows").arg(path))
 }
 
 // ---------------------------------------------------------------------------
@@ -193,7 +201,7 @@ fn info_plist(version: &str) -> String {
 <dict>
   <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleDisplayName</key><string>{PRODUCT}</string>
-  <key>CFBundleExecutable</key><string>glidedesk</string>
+  <key>CFBundleExecutable</key><string>nexpingdesk</string>
   <key>CFBundleIconFile</key><string>icon.icns</string>
   <key>CFBundleIdentifier</key><string>{APP_ID}</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
@@ -208,9 +216,9 @@ fn info_plist(version: &str) -> String {
   <key>NSHighResolutionCapable</key><true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
   <key>NSLocalNetworkUsageDescription</key>
-  <string>Glidedesk connects to your other computers on the local network to share the keyboard, mouse and clipboard.</string>
+  <string>Nexpingdesk connects to your other computers on the local network to share the keyboard, mouse and clipboard.</string>
   <key>NSBonjourServices</key>
-  <array><string>_glidedesk._udp</string></array>
+  <array><string>_nexpingdesk._udp</string></array>
   <key>NSHumanReadableCopyright</key><string>Licensed under MIT OR Apache-2.0.</string>
 </dict>
 </plist>
@@ -220,12 +228,12 @@ fn info_plist(version: &str) -> String {
 
 fn uninstaller_plist(version: &str) -> String {
     info_plist(version)
-        .replace("<string>glidedesk</string>", "<string>uninstall</string>")
-        .replace(APP_ID, "app.glidedesk.uninstaller")
+        .replace("<string>nexpingdesk</string>", "<string>uninstall</string>")
+        .replace(APP_ID, "app.nexpingdesk.uninstaller")
         .replace("<key>LSUIElement</key><true/>", "<key>LSUIElement</key><false/>")
         .replace(
             &format!("<key>CFBundleDisplayName</key><string>{PRODUCT}</string>"),
-            "<key>CFBundleDisplayName</key><string>Uninstall Glidedesk</string>",
+            "<key>CFBundleDisplayName</key><string>Uninstall Nexpingdesk</string>",
         )
 }
 
@@ -244,8 +252,8 @@ fn package_macos() -> Result {
     clean_dir(&stage)?;
     let app = stage.join(format!("{PRODUCT}.app"));
     let contents = app.join("Contents");
-    copy(&exe, &contents.join("MacOS/glidedesk"))?;
-    set_exec(&contents.join("MacOS/glidedesk"))?;
+    copy(&exe, &contents.join("MacOS/nexpingdesk"))?;
+    set_exec(&contents.join("MacOS/nexpingdesk"))?;
     copy(&root().join("app/icons/icon.icns"), &contents.join("Resources/icon.icns"))?;
     copy(&root().join("installer/macos/uninstall.sh"), &contents.join("Resources/uninstall.sh"))?;
     set_exec(&contents.join("Resources/uninstall.sh"))?;
@@ -253,8 +261,8 @@ fn package_macos() -> Result {
     write(&contents.join("PkgInfo"), "APPL????")?;
     mac_sign(&app, APP_ID)?;
 
-    // "Uninstall Glidedesk.app": a tiny bundle that runs the same script.
-    let un = stage.join("Uninstall Glidedesk.app/Contents");
+    // "Uninstall Nexpingdesk.app": a tiny bundle that runs the same script.
+    let un = stage.join("Uninstall Nexpingdesk.app/Contents");
     copy(&root().join("installer/macos/uninstall.sh"), &un.join("MacOS/uninstall"))?;
     set_exec(&un.join("MacOS/uninstall"))?;
     copy(&root().join("app/icons/icon.icns"), &un.join("Resources/icon.icns"))?;
@@ -271,7 +279,7 @@ fn package_macos() -> Result {
             .arg(&stage)
             .arg(&dmg))?;
     } else {
-        let iso = target_dir().join("stage/glidedesk.iso");
+        let iso = target_dir().join("stage/nexpingdesk.iso");
         run(Command::new("xorrisofs")
             .args(["-D", "-l", "-V", PRODUCT, "-no-pad", "-r", "-dir-mode", "0755", "-o"])
             .arg(&iso)
@@ -313,10 +321,10 @@ fn package_windows() -> Result {
     fs::create_dir_all(&out).map_err(|e| e.to_string())?;
     let exe = cargo_build(Some(WIN_TARGET))?;
     // Sign the program itself before it is packed into the installer.
-    let signed = target_dir().join("stage/windows/glidedesk.exe");
+    let signed = target_dir().join("stage/windows/nexpingdesk.exe");
     copy(&exe, &signed)?;
     win_sign(&signed)?;
-    let nsi = root().join("installer/windows/glidedesk.nsi");
+    let nsi = root().join("installer/windows/nexpingdesk.nsi");
     for offline in [false, true] {
         let wv = webview2(offline)?;
         let suffix = if offline { "-offline" } else { "" };
@@ -343,16 +351,16 @@ fn package_windows() -> Result {
     Ok(())
 }
 
-const PORTABLE_README: &str = "Glidedesk (portable)\r\n\
+const PORTABLE_README: &str = "Nexpingdesk (portable)\r\n\
 ====================\r\n\r\n\
-Run Glidedesk.exe from this folder (a USB stick works too). Nothing is installed:\r\n\
-settings, logs and received files stay in the \"Glidedesk Data\" folder here, and\r\n\
-Glidedesk does not start at login unless you turn that on in General.\r\n\r\n\
-- Windows may ask to allow Glidedesk on private networks: choose Allow.\r\n\
+Run Nexpingdesk.exe from this folder (a USB stick works too). Nothing is installed:\r\n\
+settings, logs and received files stay in the \"Nexpingdesk Data\" folder here, and\r\n\
+Nexpingdesk does not start at login unless you turn that on in General.\r\n\r\n\
+- Windows may ask to allow Nexpingdesk on private networks: choose Allow.\r\n\
 - Needs the Microsoft Edge WebView2 Runtime (built into Windows 11 and current\r\n\
   Windows 10). If the window stays blank, use the installer instead.\r\n\
-- To remove it: quit Glidedesk from the tray and delete this folder.\r\n\
-- Keep glidedesk.portable next to the program; without it Glidedesk uses your\r\n\
+- To remove it: quit Nexpingdesk from the tray and delete this folder.\r\n\
+- Keep nexpingdesk.portable next to the program; without it Nexpingdesk uses your\r\n\
   user profile like the installed version.\r\n";
 
 /// Portable Windows build: the signed program, the marker that keeps its data
@@ -364,10 +372,10 @@ fn portable_zip(exe: &Path, dest: &Path) -> Result {
     let mut zip = zip::ZipWriter::new(file);
     let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     let exe_bytes = fs::read(exe).map_err(|e| format!("{}: {e}", exe.display()))?;
-    let marker = "This file keeps Glidedesk portable: its data stays in \"Glidedesk Data\" next to it.\r\n";
+    let marker = "This file keeps Nexpingdesk portable: its data stays in \"Nexpingdesk Data\" next to it.\r\n";
     for (name, bytes) in [
         (format!("{PRODUCT}/{PRODUCT}.exe"), exe_bytes.as_slice()),
-        (format!("{PRODUCT}/glidedesk.portable"), marker.as_bytes()),
+        (format!("{PRODUCT}/nexpingdesk.portable"), marker.as_bytes()),
         (format!("{PRODUCT}/README.txt"), PORTABLE_README.as_bytes()),
     ] {
         zip.start_file(name, opts).map_err(|e| e.to_string())?;
@@ -393,37 +401,43 @@ fn linux_arch() -> Result<(&'static str, &'static str, &'static str)> {
 fn nfpm_config(v: &str, arch: &str, stage: &Path) -> String {
     let s = stage.display();
     format!(
-        r"name: glidedesk
+        r"name: nexpingdesk
 arch: {arch}
 platform: linux
 version: {v}
 section: utils
 priority: optional
-maintainer: Glidedesk <noreply@glidedesk.invalid>
+maintainer: Nexpingdesk <noreply@nexpingdesk.invalid>
 description: |
   One keyboard and mouse for your computers. Move the cursor off the edge of
   the screen and it continues on the next computer; the clipboard and copied
   files follow it.
-homepage: https://glidedesk.invalid
+homepage: https://nexpingdesk.invalid
 license: MIT OR Apache-2.0
+# The app's former package name: installing this one removes it (Debian
+# Replaces/Conflicts, RPM Obsoletes); settings are taken over on first start.
+replaces:
+  - glidedesk
+conflicts:
+  - glidedesk
 contents:
-  - src: {s}/glidedesk
-    dst: /usr/bin/glidedesk
+  - src: {s}/nexpingdesk
+    dst: /usr/bin/nexpingdesk
     file_info: {{ mode: 0755 }}
-  - src: {s}/glidedesk.desktop
-    dst: /usr/share/applications/glidedesk.desktop
+  - src: {s}/nexpingdesk.desktop
+    dst: /usr/share/applications/nexpingdesk.desktop
   - src: {s}/icons/32.png
-    dst: /usr/share/icons/hicolor/32x32/apps/glidedesk.png
+    dst: /usr/share/icons/hicolor/32x32/apps/nexpingdesk.png
   - src: {s}/icons/128.png
-    dst: /usr/share/icons/hicolor/128x128/apps/glidedesk.png
+    dst: /usr/share/icons/hicolor/128x128/apps/nexpingdesk.png
   - src: {s}/icons/256.png
-    dst: /usr/share/icons/hicolor/256x256/apps/glidedesk.png
+    dst: /usr/share/icons/hicolor/256x256/apps/nexpingdesk.png
   - src: {s}/icons/512.png
-    dst: /usr/share/icons/hicolor/512x512/apps/glidedesk.png
-  - src: {s}/70-glidedesk-uinput.rules
-    dst: /usr/lib/udev/rules.d/70-glidedesk-uinput.rules
-  - src: {s}/glidedesk-uinput.conf
-    dst: /usr/lib/modules-load.d/glidedesk-uinput.conf
+    dst: /usr/share/icons/hicolor/512x512/apps/nexpingdesk.png
+  - src: {s}/70-nexpingdesk-uinput.rules
+    dst: /usr/lib/udev/rules.d/70-nexpingdesk-uinput.rules
+  - src: {s}/nexpingdesk-uinput.conf
+    dst: /usr/lib/modules-load.d/nexpingdesk-uinput.conf
 scripts:
   postinstall: {s}/postinstall.sh
   postremove: {s}/postremove.sh
@@ -444,11 +458,15 @@ fn package_linux() -> Result {
     let stage = target_dir().join(format!("stage/linux-{name}"));
     clean_dir(&stage)?;
     let li = root().join("installer/linux");
-    copy(&exe, &stage.join("glidedesk"))?;
-    set_exec(&stage.join("glidedesk"))?;
-    for f in
-        ["glidedesk.desktop", "70-glidedesk-uinput.rules", "glidedesk-uinput.conf", "postinstall.sh", "postremove.sh"]
-    {
+    copy(&exe, &stage.join("nexpingdesk"))?;
+    set_exec(&stage.join("nexpingdesk"))?;
+    for f in [
+        "nexpingdesk.desktop",
+        "70-nexpingdesk-uinput.rules",
+        "nexpingdesk-uinput.conf",
+        "postinstall.sh",
+        "postremove.sh",
+    ] {
         copy(&li.join(f), &stage.join(f))?;
     }
     set_exec(&stage.join("postinstall.sh"))?;
@@ -474,11 +492,11 @@ fn package_linux() -> Result {
     set_exec(&stage.join("install.sh"))?;
     let tgz = out.join(format!("{PRODUCT}_{v}_linux-{name}.tar.gz"));
     run(Command::new("tar").current_dir(&stage).arg("-czf").arg(&tgz).args([
-        "glidedesk",
-        "glidedesk.desktop",
+        "nexpingdesk",
+        "nexpingdesk.desktop",
         "icons",
-        "70-glidedesk-uinput.rules",
-        "glidedesk-uinput.conf",
+        "70-nexpingdesk-uinput.rules",
+        "nexpingdesk-uinput.conf",
         "install.sh",
     ]))?;
     eprintln!("✓ {}", tgz.display());
@@ -519,13 +537,13 @@ fn checksums() -> Result {
     }
     let sums = out.join("SHA256SUMS");
     write(&sums, &text)?;
-    if let Some(key) = env_path("GLIDEDESK_MINISIGN_KEY") {
+    if let Some(key) = env_path("NEXPINGDESK_MINISIGN_KEY") {
         run(Command::new("minisign")
             .args(["-S", "-s"])
             .arg(key)
             .arg("-m")
             .arg(&sums)
-            .args(["-t", "Glidedesk release checksums"]))?;
+            .args(["-t", "Nexpingdesk release checksums"]))?;
         eprintln!("✓ SHA256SUMS.minisig");
     }
     Ok(())

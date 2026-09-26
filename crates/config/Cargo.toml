@@ -1,6 +1,6 @@
 [package]
-name = "glidedesk-config"
-description = "Glidedesk configuration schema and storage"
+name = "nexpingdesk-config"
+description = "Nexpingdesk configuration schema and storage"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,8 +8,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-glidedesk-layout.workspace = true
-glidedesk-proto.workspace = true
+nexpingdesk-layout.workspace = true
+nexpingdesk-proto.workspace = true
 directories.workspace = true
 getrandom.workspace = true
 serde.workspace = true

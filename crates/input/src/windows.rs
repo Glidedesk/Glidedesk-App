@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
-use glidedesk_proto::{Input, KeyCode, LedState, MonitorId, MonitorInfo, MouseButton, Point, Rect};
+use nexpingdesk_proto::{Input, KeyCode, LedState, MonitorId, MonitorInfo, MouseButton, Point, Rect};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
@@ -451,7 +451,7 @@ fn capture_thread(shared: &Arc<Shared>, ready: &std::sync::mpsc::Sender<Result<(
         let class = WNDCLASSW {
             lpfnWndProc: Some(window_proc),
             hInstance: instance,
-            lpszClassName: w!("GlidedeskCapture"),
+            lpszClassName: w!("NexpingdeskCapture"),
             hCursor: blank_cursor(instance).unwrap_or_default(),
             ..Default::default()
         };
@@ -459,7 +459,7 @@ fn capture_thread(shared: &Arc<Shared>, ready: &std::sync::mpsc::Sender<Result<(
         // Message-only window for Raw Input and display-change messages.
         let msg_hwnd = CreateWindowExW(
             WINDOW_EX_STYLE(0),
-            w!("GlidedeskCapture"),
+            w!("NexpingdeskCapture"),
             w!(""),
             WS_POPUP,
             0,
@@ -476,7 +476,7 @@ fn capture_thread(shared: &Arc<Shared>, ready: &std::sync::mpsc::Sender<Result<(
         // while grabbed: its blank class cursor hides the pointer.
         let veil = CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
-            w!("GlidedeskCapture"),
+            w!("NexpingdeskCapture"),
             w!(""),
             WS_POPUP,
             0,
@@ -509,7 +509,7 @@ fn capture_thread(shared: &Arc<Shared>, ready: &std::sync::mpsc::Sender<Result<(
             if msg.hwnd.is_invalid() && msg.message == WM_APP_GRAB {
                 if msg.wParam.0 == 1 {
                     // Hooks run newest first. Mouse software (Logitech Options+, …)
-                    // started after Glidedesk would see an external mouse's extra
+                    // started after Nexpingdesk would see an external mouse's extra
                     // buttons before our hook swallows them and act on them here as
                     // well. Reinstalled, ours is in front again (and back, should
                     // Windows have dropped it as too slow). No hook runs before this
@@ -564,7 +564,7 @@ pub fn start_capture() -> Result<Capture, InputError> {
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();
     let thread_shared = shared.clone();
     std::thread::Builder::new()
-        .name("gd-capture".into())
+        .name("nd-capture".into())
         .spawn(move || {
             capture_thread(&thread_shared, &ready_tx);
             let mut slot = ACTIVE.write().unwrap_or_else(PoisonError::into_inner);

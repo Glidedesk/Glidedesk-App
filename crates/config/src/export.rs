@@ -22,9 +22,9 @@ pub enum ExportScope {
 pub enum ExportError {
     #[error("file is larger than {MAX_CONFIG_BYTES} bytes")]
     TooLarge,
-    #[error("not a valid Glidedesk settings file: {0}")]
+    #[error("not a valid Nexpingdesk settings file: {0}")]
     Invalid(String),
-    #[error("file comes from a newer Glidedesk (schema {0})")]
+    #[error("file comes from a newer Nexpingdesk (schema {0})")]
     Newer(u32),
 }
 
@@ -57,7 +57,7 @@ pub fn export(cfg: &Config, scope: ExportScope, app_version: &str) -> Result<Str
     meta.insert("scope".into(), Value::String(if scope == ExportScope::Full { "full" } else { "layout" }.into()));
     table.insert("export".into(), Value::Table(meta));
     let body = toml::to_string_pretty(&table).map_err(|e| ExportError::Invalid(e.to_string()))?;
-    Ok(format!("# Glidedesk settings export\n\n{body}"))
+    Ok(format!("# Nexpingdesk settings export\n\n{body}"))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -151,8 +151,8 @@ pub fn import(text: &str, current: &Config, opts: ImportOptions) -> Result<Impor
 mod tests {
     use super::*;
     use crate::schema::{BindMode, ClientEntry, Role};
-    use glidedesk_layout::LinkSpec;
-    use glidedesk_proto::{DeviceId, Side};
+    use nexpingdesk_layout::LinkSpec;
+    use nexpingdesk_proto::{DeviceId, Side};
 
     fn sample() -> Config {
         let mut c = Config::default();

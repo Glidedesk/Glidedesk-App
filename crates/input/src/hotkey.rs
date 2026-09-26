@@ -3,8 +3,8 @@
 use std::fmt;
 use std::str::FromStr;
 
-use glidedesk_layout::Mods;
-use glidedesk_proto::KeyCode;
+use nexpingdesk_layout::Mods;
+use nexpingdesk_proto::KeyCode;
 
 use crate::keymap::hid;
 

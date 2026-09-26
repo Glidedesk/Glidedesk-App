@@ -1,6 +1,6 @@
 //! Length-prefixed postcard frames over QUIC streams.
 
-use glidedesk_proto::{check_frame_len, decode_body, encode_frame};
+use nexpingdesk_proto::{check_frame_len, decode_body, encode_frame};
 use quinn::{ReadExactError, RecvStream, SendStream};
 use serde::Serialize;
 use serde::de::DeserializeOwned;

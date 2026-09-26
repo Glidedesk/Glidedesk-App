@@ -1,4 +1,4 @@
-# Glidedesk CI — the one pipeline.
+# Nexpingdesk CI — the one pipeline.
 #
 #   pull request              → test (Linux, Windows, macOS natively)
 #   Dependabot pull request   → test → auto-merge (patch/minor) → Nightly
@@ -112,13 +112,13 @@ jobs:
         run: cargo nextest run --workspace --locked --no-fail-fast
 
       - name: Build the app
-        run: cargo build -p glidedesk-app --locked
+        run: cargo build -p nexpingdesk-app --locked
 
       - name: Real agents — connect, client restarts, self-test
         run: |
           Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp >/dev/null 2>&1 &
           sleep 1
-          DISPLAY=:99 bash scripts/os-smoke.sh target/debug/glidedesk
+          DISPLAY=:99 bash scripts/os-smoke.sh target/debug/nexpingdesk
 
   native:
     name: ${{ matrix.name }} — tests, real agents
@@ -134,8 +134,8 @@ jobs:
       matrix:
         include:
           # xtask (packaging) only runs on Linux: not built on Windows.
-          - { name: Windows x64, os: windows-2025, exe: glidedesk.exe, skip: "--exclude xtask" }
-          - { name: macOS ARM64, os: macos-15, exe: glidedesk, skip: "" }
+          - { name: Windows x64, os: windows-2025, exe: nexpingdesk.exe, skip: "--exclude xtask" }
+          - { name: macOS ARM64, os: macos-15, exe: nexpingdesk, skip: "" }
     defaults:
       run:
         shell: bash
@@ -179,11 +179,11 @@ jobs:
       - name: Tests (native)
         # macOS: also the real event-tap tests (they take over the runner's input).
         env:
-          GLIDEDESK_TAP_TESTS: ${{ runner.os == 'macOS' && '1' || '' }}
+          NEXPINGDESK_TAP_TESTS: ${{ runner.os == 'macOS' && '1' || '' }}
         run: cargo nextest run --workspace ${{ matrix.skip }} --locked --no-fail-fast
 
       - name: Build the app
-        run: cargo build -p glidedesk-app --locked
+        run: cargo build -p nexpingdesk-app --locked
 
       - name: Real agents — connect, client restarts, self-test
         env:
@@ -263,14 +263,14 @@ jobs:
     env:
       XWIN_ACCEPT_LICENSE: "1"
       XWIN_CROSS_COMPILER: clang
-      GLIDEDESK_CACHE: ${{ github.workspace }}/.gd-cache
+      NEXPINGDESK_CACHE: ${{ github.workspace }}/.nd-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Version
         run: |
-          if [ "$IS_TAG" = true ]; then echo "GLIDEDESK_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"; fi
+          if [ "$IS_TAG" = true ]; then echo "NEXPINGDESK_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"; fi
       - name: Tools
         run: |
           sudo apt-get update -qq
@@ -292,14 +292,14 @@ jobs:
           package-manager-cache: false
       - name: Signing key (optional)
         env:
-          PFX: ${{ secrets.GLIDEDESK_WIN_PFX_BASE64 }}
-          PW: ${{ secrets.GLIDEDESK_SIGN_PASSWORD }}
+          PFX: ${{ secrets.NEXPINGDESK_WIN_PFX_BASE64 }}
+          PW: ${{ secrets.NEXPINGDESK_SIGN_PASSWORD }}
         run: |
           if [ -n "$PFX" ]; then
             echo "$PFX" | base64 -d > "$RUNNER_TEMP/win.pfx"
-            { echo "GLIDEDESK_WIN_PFX=$RUNNER_TEMP/win.pfx"; echo "GLIDEDESK_WIN_PFX_PASSWORD=$PW"; } >> "$GITHUB_ENV"
+            { echo "NEXPINGDESK_WIN_PFX=$RUNNER_TEMP/win.pfx"; echo "NEXPINGDESK_WIN_PFX_PASSWORD=$PW"; } >> "$GITHUB_ENV"
           else
-            echo "::notice::No GLIDEDESK_WIN_PFX_BASE64 secret — Windows files will be unsigned."
+            echo "::notice::No NEXPINGDESK_WIN_PFX_BASE64 secret — Windows files will be unsigned."
           fi
       - run: cargo xtask package windows
       - name: Remove the signing key
@@ -333,7 +333,7 @@ jobs:
           persist-credentials: false
       - name: Version
         run: |
-          if [ "$IS_TAG" = true ]; then echo "GLIDEDESK_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"; fi
+          if [ "$IS_TAG" = true ]; then echo "NEXPINGDESK_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"; fi
       - name: Tools (nfpm pinned, checksum verified)
         env:
           ARCH: ${{ matrix.nfpm }}
@@ -382,7 +382,7 @@ jobs:
           persist-credentials: false
       - name: Version
         run: |
-          if [ "$IS_TAG" = true ]; then echo "GLIDEDESK_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"; fi
+          if [ "$IS_TAG" = true ]; then echo "NEXPINGDESK_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"; fi
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: stable
@@ -404,14 +404,14 @@ jobs:
           rcodesign --version
       - name: Signing identity (optional)
         env:
-          P12: ${{ secrets.GLIDEDESK_MAC_P12_BASE64 }}
-          PW: ${{ secrets.GLIDEDESK_SIGN_PASSWORD }}
+          P12: ${{ secrets.NEXPINGDESK_MAC_P12_BASE64 }}
+          PW: ${{ secrets.NEXPINGDESK_SIGN_PASSWORD }}
         run: |
           if [ -n "$P12" ]; then
             echo "$P12" | base64 -d > "$RUNNER_TEMP/mac.p12"
-            { echo "GLIDEDESK_MAC_P12=$RUNNER_TEMP/mac.p12"; echo "GLIDEDESK_MAC_P12_PASSWORD=$PW"; } >> "$GITHUB_ENV"
+            { echo "NEXPINGDESK_MAC_P12=$RUNNER_TEMP/mac.p12"; echo "NEXPINGDESK_MAC_P12_PASSWORD=$PW"; } >> "$GITHUB_ENV"
           else
-            echo "::notice::No GLIDEDESK_MAC_P12_BASE64 secret — the app gets an ad-hoc signature."
+            echo "::notice::No NEXPINGDESK_MAC_P12_BASE64 secret — the app gets an ad-hoc signature."
           fi
       - run: cargo xtask package macos
       - name: Remove the signing identity
@@ -447,10 +447,10 @@ jobs:
           toolchain: stable
       - name: Checksums (+ minisign signature when the key is set)
         env:
-          KEY: ${{ secrets.GLIDEDESK_MINISIGN_KEY_BASE64 }}
+          KEY: ${{ secrets.NEXPINGDESK_MINISIGN_KEY_BASE64 }}
         run: |
           sudo apt-get install -y -qq minisign
-          if [ -n "$KEY" ]; then echo "$KEY" | base64 -d > "$RUNNER_TEMP/minisign.key"; export GLIDEDESK_MINISIGN_KEY="$RUNNER_TEMP/minisign.key"; fi
+          if [ -n "$KEY" ]; then echo "$KEY" | base64 -d > "$RUNNER_TEMP/minisign.key"; export NEXPINGDESK_MINISIGN_KEY="$RUNNER_TEMP/minisign.key"; fi
           cp signing/*.cer signing/minisign.pub output-build/ 2>/dev/null || true
           cargo xtask checksums
           rm -f "$RUNNER_TEMP/minisign.key"
@@ -470,7 +470,7 @@ jobs:
           verify="\`minisign -Vm SHA256SUMS -p minisign.pub\`"
           if [ "$PRIVATE" != true ]; then verify="\`gh attestation verify <file> --repo $GITHUB_REPOSITORY\` and $verify"; fi
           if [ "$IS_TAG" = true ]; then
-            gh release create "$GITHUB_REF_NAME" output-build/* --title "Glidedesk $GITHUB_REF_NAME" --generate-notes --verify-tag
+            gh release create "$GITHUB_REF_NAME" output-build/* --title "Nexpingdesk $GITHUB_REF_NAME" --generate-notes --verify-tag
           else
             gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
             gh release create nightly output-build/* --prerelease --target "$GITHUB_SHA" --title "Nightly" \

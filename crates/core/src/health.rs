@@ -3,8 +3,8 @@
 
 use std::time::{Duration, Instant};
 
-pub use glidedesk_ipc::views::HealthState;
-use glidedesk_proto::ClientStatus;
+pub use nexpingdesk_ipc::views::HealthState;
+use nexpingdesk_proto::ClientStatus;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HealthConfig {

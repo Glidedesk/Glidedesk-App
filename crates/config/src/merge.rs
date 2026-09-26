@@ -5,7 +5,7 @@
 //! know it yet, so when it saves, its copy has no entry for that client. Only
 //! an explicit "Forget" may remove a client; a save that just lacks one keeps it.
 
-use glidedesk_proto::DeviceId;
+use nexpingdesk_proto::DeviceId;
 
 use crate::schema::Config;
 
@@ -41,8 +41,8 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use glidedesk_layout::LinkSpec;
-    use glidedesk_proto::Side;
+    use nexpingdesk_layout::LinkSpec;
+    use nexpingdesk_proto::Side;
 
     use super::*;
     use crate::schema::{ClientEntry, Tile};

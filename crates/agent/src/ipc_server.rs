@@ -1,17 +1,17 @@
 //! Accepts UI connections and forwards requests to the agent loop.
 
-use glidedesk_ipc::transport::{self, Listener, Stream};
-use glidedesk_ipc::{Event, Message, RequestEnvelope};
+use nexpingdesk_ipc::transport::{self, Listener, Stream};
+use nexpingdesk_ipc::{Event, Message, RequestEnvelope};
 use serde_json::Value;
 use tokio::io::BufReader;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tracing::debug;
 
-use glidedesk_ipc::AgentStatus;
+use nexpingdesk_ipc::AgentStatus;
 
 /// A request plus where to send the answer.
 pub struct Call {
-    pub request: glidedesk_ipc::Request,
+    pub request: nexpingdesk_ipc::Request,
     pub reply: oneshot::Sender<Result<Value, String>>,
 }
 
@@ -76,7 +76,7 @@ async fn connection(
                         continue;
                     }
                 };
-                if matches!(env.request, glidedesk_ipc::Request::Subscribe) {
+                if matches!(env.request, nexpingdesk_ipc::Request::Subscribe) {
                     subscribed = true;
                     let snapshot = status.borrow_and_update().clone();
                     let _ = out_tx.send(Message::ok(env.id, Value::Null)).await;

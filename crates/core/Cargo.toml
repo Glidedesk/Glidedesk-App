@@ -1,5 +1,5 @@
 [package]
-name = "glidedesk-core"
+name = "nexpingdesk-core"
 description = "Server hub, client runtime and health monitoring"
 version.workspace = true
 edition.workspace = true
@@ -8,15 +8,15 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-glidedesk-clipboard.workspace = true
-glidedesk-config.workspace = true
-glidedesk-input.workspace = true
-glidedesk-ipc.workspace = true
-glidedesk-layout.workspace = true
-glidedesk-net.workspace = true
-glidedesk-platform.workspace = true
-glidedesk-proto.workspace = true
-glidedesk-transfer.workspace = true
+nexpingdesk-clipboard.workspace = true
+nexpingdesk-config.workspace = true
+nexpingdesk-input.workspace = true
+nexpingdesk-ipc.workspace = true
+nexpingdesk-layout.workspace = true
+nexpingdesk-net.workspace = true
+nexpingdesk-platform.workspace = true
+nexpingdesk-proto.workspace = true
+nexpingdesk-transfer.workspace = true
 getrandom.workspace = true
 postcard.workspace = true
 quinn.workspace = true

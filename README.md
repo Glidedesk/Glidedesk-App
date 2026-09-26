@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="app/icons/128x128@2x.png" alt="Glidedesk" width="128" height="128">
+<img src="app/icons/128x128@2x.png" alt="Nexpingdesk" width="128" height="128">
 
-# Glidedesk
+# Nexpingdesk
 
 **One keyboard and mouse for all your computers.**
 
@@ -38,7 +38,7 @@ local network, and no account or cloud service is involved.
 
 | System | Architecture | Release files |
 |---|---|---|
-| macOS 13 or later | Apple Silicon (arm64) | `Glidedesk_<ver>_macos-arm64.dmg` |
+| macOS 13 or later | Apple Silicon (arm64) | `Nexpingdesk_<ver>_macos-arm64.dmg` |
 | Windows 10 22H2, Windows 11, Windows Server 2016 or later | x64 | `…_windows-x64-setup.exe`, `…-offline-setup.exe` (includes WebView2), `…-portable.zip` |
 | Linux (X11 or Wayland¹) | x64, arm64 | `…_linux-<arch>.deb`, `.rpm`, `.tar.gz` |
 
@@ -50,12 +50,17 @@ server role) needs an X11 session until Wayland desktops offer an input-capture 
 Download the latest files from [**Releases**](../../releases). **Nightly** is always the latest
 build of `main`.
 
+> **Upgrading from Glidedesk** (the app's former name): install Nexpingdesk the usual way. It
+> takes over your settings and removes the old app, including its start-at-login entry. Update
+> every computer, because the two versions can't connect to each other. On macOS, allow
+> Accessibility (and Input Monitoring) once more for Nexpingdesk.
+
 <details open>
 <summary><b>macOS</b></summary>
 
-Open the `.dmg` and drag **Glidedesk** to Applications. On first launch, right-click the app and
+Open the `.dmg` and drag **Nexpingdesk** to Applications. On first launch, right-click the app and
 choose **Open** (on macOS 15 and later: System Settings → Privacy & Security → Open Anyway). Then
-click **Allow…** and turn Glidedesk on under **Accessibility**, the one permission Glidedesk
+click **Allow…** and turn Nexpingdesk on under **Accessibility**, the one permission Nexpingdesk
 needs. On the Mac whose keyboard and mouse you share, also allow **Input Monitoring**
 (*Advanced → macOS permissions*). It is optional, but without it an external mouse's gestures,
 for example from Logi Options+, keep acting on the Mac while another computer has control.
@@ -68,17 +73,17 @@ Run the setup. The same file installs, **updates** (keeping your settings) and r
 
 - Silent install: `setup.exe /S [/D=C:\path] [/NORESTART]`. Exit code 3 means it installed with a
   warning, for example a firewall rule failed.
-- **Portable:** unzip `…-portable.zip` anywhere, even onto a USB stick, and run `Glidedesk.exe`.
-  Settings and logs stay in `Glidedesk Data` next to it.
+- **Portable:** unzip `…-portable.zip` anywhere, even onto a USB stick, and run `Nexpingdesk.exe`.
+  Settings and logs stay in `Nexpingdesk Data` next to it.
 </details>
 
 <details>
 <summary><b>Linux</b></summary>
 
 ```sh
-sudo apt install ./Glidedesk_<ver>_linux-<arch>.deb     # Debian, Ubuntu
-sudo dnf install ./Glidedesk_<ver>_linux-<arch>.rpm     # Fedora, RHEL
-# or: tar xzf Glidedesk_<ver>_linux-<arch>.tar.gz && sudo ./install.sh
+sudo apt install ./Nexpingdesk_<ver>_linux-<arch>.deb     # Debian, Ubuntu
+sudo dnf install ./Nexpingdesk_<ver>_linux-<arch>.rpm     # Fedora, RHEL
+# or: tar xzf Nexpingdesk_<ver>_linux-<arch>.tar.gz && sudo ./install.sh
 ```
 
 The package adds a udev rule so the signed-in user can create a virtual keyboard and mouse. The
@@ -88,7 +93,7 @@ computer needs this to be controlled, on Wayland too.
 **Verify a download** (optional):
 
 ```sh
-gh attestation verify <file> --repo <owner>/glidedesk
+gh attestation verify <file> --repo <owner>/nexpingdesk
 minisign -Vm SHA256SUMS -p minisign.pub && sha256sum -c SHA256SUMS
 ```
 
@@ -108,14 +113,14 @@ Optional settings:
 - *Network → Who may connect* limits which addresses may connect.
 - *Computers → Settings* sets pointer speed, scrolling and ⌘/Ctrl swapping per computer.
 
-Glidedesk starts at login, in the tray only. You can turn that off under *General → Start at
+Nexpingdesk starts at login, in the tray only. You can turn that off under *General → Start at
 login*.
 
 **Uninstall:**
 
 - **Windows:** Settings → Apps.
-- **macOS:** open **Uninstall Glidedesk** in the DMG, or use *Advanced → Uninstall*.
-- **Linux:** use your package manager. Settings in `~/.config/glidedesk` are kept.
+- **macOS:** open **Uninstall Nexpingdesk** in the DMG, or use *Advanced → Uninstall*.
+- **Linux:** use your package manager. Settings in `~/.config/nexpingdesk` are kept.
 
 ## How it works
 
@@ -193,5 +198,5 @@ Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) and the
 
 Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT License](LICENSE-MIT), at
 your option. Unless you explicitly state otherwise, any contribution intentionally submitted for
-inclusion in Glidedesk by you, as defined in the Apache-2.0 license, shall be dual licensed as
+inclusion in Nexpingdesk by you, as defined in the Apache-2.0 license, shall be dual licensed as
 above, without any additional terms or conditions.

@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use glidedesk_proto::{DeviceId, MonitorInfo};
+use nexpingdesk_proto::{DeviceId, MonitorInfo};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
@@ -43,7 +43,7 @@ impl StateFile {
     pub fn save(&self) {
         match serde_json::to_vec_pretty(&self.state) {
             Ok(bytes) => {
-                if let Err(e) = glidedesk_config::store::write_atomic(&self.path, &bytes) {
+                if let Err(e) = nexpingdesk_config::store::write_atomic(&self.path, &bytes) {
                     warn!(error = %e, "could not save state");
                 }
             }
