@@ -230,3 +230,19 @@ Known gaps (v4): still no real Windows device test from this Mac; the lab covers
       signed SHA256SUMS in `output-build/`. Any failure stops it before packaging.
       Not built locally: Linux ARM64 (was GitHub's ARM runner), and the macOS app / its real
       event-tap tests on a non-Mac (Apple SDK licence).
+
+### Public repository (2026-09-26)
+- [x] Licence: MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`, Cargo, nfpm, Info.plist, NSIS).
+- [x] Pre-publication audit: gitleaks over the full history (no leaks), ecc opensource-sanitizer
+      (PASS; test hostname replaced), ecc security-reviewer: one medium finding fixed — a tiny PNG
+      from a peer could declare 16384² pixels and force ~2 GiB of allocations on a Windows client;
+      the cap is now 8192² (256 MiB) with a test that the header is refused before decoding.
+- [x] GitHub Actions back, hardened for public runs: `ci.yml` (Linux, Windows, macOS natively +
+      cargo-deny; required check "CI passed"), `release.yml` (only main/v* after CI; signing keys in
+      the `release` environment; no caches; nfpm/rcodesign pinned by SHA-256; build-provenance
+      attestations), CodeQL (Rust, TS, Actions), Scorecard, dependency review, daily RustSec audit,
+      Dependabot. Actions pinned to commit SHAs; `permissions: {}` + per-job minimum; checked with
+      actionlint and zizmor. `deny.toml` for advisories, licences and sources.
+- [x] SECURITY.md (private reporting, threat model, verifying downloads), CONTRIBUTING.md,
+      CODE_OF_CONDUCT.md, CODEOWNERS, issue forms, pull-request template.
+- [x] Builder image: nfpm pinned by version and SHA-256 instead of "latest".

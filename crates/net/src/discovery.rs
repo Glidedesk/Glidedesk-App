@@ -212,12 +212,12 @@ mod tests {
             port: 1,
             protocol: PROTOCOL_VERSION,
             app_version: String::new(),
-            host: "Soykots-MacBook-Pro".into(),
+            host: "Design-MacBook".into(),
             fullname: String::new(),
         };
         assert!(ad.matches_name("studio mac"));
-        assert!(ad.matches_name("soykots-macbook-pro.local"));
-        assert!(ad.matches_name("SOYKOTS-MACBOOK-PRO"));
+        assert!(ad.matches_name("design-macbook.local"));
+        assert!(ad.matches_name("DESIGN-MACBOOK"));
         assert!(!ad.matches_name("office-pc"));
         assert!(!ad.matches_name("  "));
     }

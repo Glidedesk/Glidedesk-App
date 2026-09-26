@@ -1,0 +1,8 @@
+# zizmor (GitHub Actions security linter) configuration.
+rules:
+  cache-poisoning:
+    ignore:
+      # ci.yml's test jobs cache Rust and pnpm downloads. Caches are saved only from
+      # main (a pull request can't write them) and release.yml's builds use no cache,
+      # so nothing that ships is restored from a cache.
+      - ci.yml

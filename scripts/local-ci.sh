@@ -1,7 +1,7 @@
 #!/bin/sh
-# Glidedesk's pipeline, run locally in Docker (GitHub only stores the code; there
-# is no GitHub Actions CI). The same steps the GitHub runners used to do:
-#   test     builder image: UI typecheck + tests + build, rustfmt, clippy, every
+# Glidedesk's pipeline, run locally in Docker — the same steps GitHub Actions
+# (.github/workflows/ci.yml) runs for every pull request, to check before pushing:
+#   test     builder image: UI typecheck + tests + build, rustfmt, cargo-deny, clippy, every
 #            Rust test, Windows cross-check (and macOS, when the SDK is present)
 #   agents   lab image, virtual X screen: real server + client agents connect,
 #            survive client restarts, run the self-test (scripts/os-smoke.sh)
@@ -46,15 +46,15 @@ images() {
 run_tests() {
   step "test: UI (typecheck, tests, build)"
   $RUN sh -c 'cd app/ui && pnpm install --frozen-lockfile && pnpm typecheck && pnpm test && pnpm build' || fail "UI"
-  step "test: rustfmt, clippy, all Rust tests"
-  $RUN sh -c 'cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo nextest run --workspace --locked --no-fail-fast' ||
+  step "test: rustfmt, cargo-deny, clippy, all Rust tests"
+  $RUN sh -c 'cargo fmt --all -- --check && cargo deny --locked check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo nextest run --workspace --locked --no-fail-fast' ||
     fail "Rust lint/tests"
   targets="x86_64-pc-windows-msvc"
   $have_sdk && targets="$targets aarch64-apple-darwin"
   step "test: cross-checks ($targets)"
   # shellcheck disable=SC2086
   $RUN cargo xtask check-cross $targets || fail "cross-check"
-  note "tests:    passed (UI, rustfmt, clippy, Rust tests, cross-check: $targets)"
+  note "tests:    passed (UI, rustfmt, cargo-deny, clippy, Rust tests, cross-check: $targets)"
 }
 
 run_agents() {

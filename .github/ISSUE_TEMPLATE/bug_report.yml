@@ -1,0 +1,39 @@
+name: Bug report
+description: Something doesn't work as it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      placeholder: "Moving the cursor to the right edge of the Mac doesn't continue on the Windows PC…"
+    validations: { required: true }
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+    validations: { required: true }
+  - type: input
+    id: version
+    attributes:
+      label: Glidedesk version
+      description: Computers → Version, or the file name you installed.
+    validations: { required: true }
+  - type: textarea
+    id: systems
+    attributes:
+      label: Computers involved
+      description: For each computer — system and version, server or client, X11/Wayland on Linux.
+      placeholder: |
+        Server: macOS 15.3, Apple Silicon
+        Client: Ubuntu 24.04, Wayland
+    validations: { required: true }
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Advanced → Log files → Open folder. Remove anything private before pasting.
+      render: text

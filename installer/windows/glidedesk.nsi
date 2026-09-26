@@ -61,7 +61,7 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "FileDescription" "${PRODUCT} setup"
 VIAddVersionKey "CompanyName" "${PUBLISHER}"
-VIAddVersionKey "LegalCopyright" "Private software"
+VIAddVersionKey "LegalCopyright" "MIT OR Apache-2.0"
 
 !define MUI_ICON "${ICON}"
 !define MUI_UNICON "${ICON}"

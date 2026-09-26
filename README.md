@@ -1,5 +1,10 @@
 # Glidedesk
 
+[![CI](https://github.com/soykot360/glidedesk/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/soykot360/glidedesk/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/soykot360/glidedesk/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/soykot360/glidedesk/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/soykot360/glidedesk/badge)](https://scorecard.dev/viewer/?uri=github.com/soykot360/glidedesk)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+
 One keyboard and mouse for your Mac, Windows and Linux computers. Move the cursor off
 the edge of the screen and it continues on the next computer; the clipboard and copied
 files follow it. One app — every computer can be the server or a client.
@@ -80,27 +85,39 @@ make test           # lint + all tests + macOS/Windows cross-checks + UI tests
 make release        # macOS arm64 + Windows x64 + Linux (this machine's arch) → output-build/
 ```
 
-## Building and testing: local Docker only (no GitHub CI)
+## CI and releases
 
-GitHub only stores the code — there is no GitHub Actions workflow. Every build and test runs
-locally in Docker with one command (the same steps the GitHub runners used to do):
+Every pull request and every push to `main` is tested on GitHub's hosted runners — Linux x64,
+Windows x64 and macOS ARM64, natively: UI typecheck/tests/build, rustfmt, clippy, `cargo deny`
+(advisories, licences, sources), every Rust test (on the Mac also the real event-tap tests) and
+real server + client agents (connect, client restarts, self-test). A pull request can be merged
+only when the **CI passed** check is green.
+
+Only then does a push to `main` publish the **Nightly** pre-release, and a `v*` tag a release:
+macOS Apple Silicon, Windows x64, Linux x64 and ARM64, with a signed `SHA256SUMS` and a build
+provenance attestation for every file. CodeQL, OpenSSF Scorecard, dependency review, a daily
+RustSec audit and Dependabot run alongside.
+
+The same pipeline runs locally in Docker, to check before you push:
 
 ```sh
 scripts/local-ci.sh            # or: make ci — test → real agents → installers for every platform
 scripts/local-ci.sh test       # only the tests
-scripts/local-ci.sh package    # only the installers
+scripts/local-ci.sh package    # only the installers (output-build/)
 ```
 
-1. **test** — UI typecheck/tests/build, rustfmt, clippy, every Rust test, Windows cross-check
-   (and macOS when the SDK is present).
-2. **agents** — real server + client agents on a virtual screen: connect, client restarts, self-test.
-3. **package** — Linux x64 `.deb`/`.rpm`/`.tar.gz`, Windows installer + offline installer +
-   portable zip, macOS `.dmg`, `SHA256SUMS` (signed with `.signing/` keys when present).
+The macOS app needs the macOS SDK, which Apple allows only on Apple hardware: locally, run
+`make sdk` and `scripts/local-ci.sh` on a Mac to include it; elsewhere it is reported as skipped.
 
-A failing step stops the run, so nothing is packaged from code that failed a test. Installers go
-to `output-build/` (older files move to `output-build/previous-*/`). The macOS app needs the
-macOS SDK, which Apple allows only on Apple hardware: run `make sdk` and `scripts/local-ci.sh`
-on the Mac to include it; elsewhere it is reported as skipped. The Mac's real event-tap tests
-also need a Mac: `GLIDEDESK_TAP_TESTS=1 cargo test -p glidedesk-input`.
+## Contributing, security, licence
+
+- Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
+  [Code of Conduct](CODE_OF_CONDUCT.md).
+- Report security problems privately — see [SECURITY.md](SECURITY.md).
+
+<a id="license"></a>Glidedesk is licensed under either of [Apache License 2.0](LICENSE-APACHE) or
+[MIT License](LICENSE-MIT), at your option. Unless you explicitly state otherwise, any
+contribution intentionally submitted for inclusion in Glidedesk by you, as defined in the
+Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
 
 Docs: `PLAN.md` (design), `docs/PROGRESS.md` (status), `docs/TESTING.md` (real-device checklist).

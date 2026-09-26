@@ -18,7 +18,7 @@ help:
 	@echo "make release       everything                      -> output-build/"
 	@echo "make shell         interactive shell in the builder"
 
-# The local pipeline (there is no GitHub CI): see scripts/local-ci.sh.
+# The CI pipeline, run locally in Docker (the same steps as GitHub Actions): see scripts/local-ci.sh.
 ci:
 	scripts/local-ci.sh
 

@@ -788,7 +788,7 @@ Run on real hardware (VMs only where noted) after each phase, using the installe
 1. **Name** — Glidedesk.
 2. **Signing** — no paid certificates; first-run security warnings are fine (private app).
 3. **OS support** — macOS 13+, Windows 10 22H2 / 11, Windows Server 2016 or later.
-4. **Licence** — private, closed source; no public package managers (Homebrew/winget dropped).
+4. **Licence** — ~~private, closed source~~ → **open source, MIT OR Apache-2.0** (public repo since 2026-09-26); no public package managers yet (Homebrew/winget dropped).
 5. **Servers** — one server with many clients; no multi-server profiles.
 
 ---
@@ -811,7 +811,7 @@ New requirements:
 | R27 | **One app** — no separate agent program; the same app is server or client |
 | R28 | Find and fix all bugs and vulnerabilities; update both apps |
 | R29 | Signed without any paid account |
-| R30 | ~~GitHub Actions~~ → local Docker pipeline `scripts/local-ci.sh` (GitHub only stores the code) |
+| R30 | GitHub Actions on the public repo (free hosted runners) + the same pipeline locally in Docker (`scripts/local-ci.sh`) |
 
 ### 13.1 Decisions
 
@@ -842,13 +842,18 @@ Each starts the app with `--background` (tray only, no window).
 | Linux | `SHA256SUMS` signed with **minisign** (public key in the repo) | Anyone can verify downloads |
 `scripts/generate-signing-keys.sh` creates all three keys once. Nothing secret is ever committed.
 
-**No GitHub CI any more (R30 replaced, 2026-09-26).** GitHub Actions ran out of the free
-private-repo minutes, so the workflows were removed and disabled: GitHub only stores the code.
-The same pipeline runs locally in Docker — `scripts/local-ci.sh` (`make ci`): tests (UI, rustfmt,
-clippy, every Rust test, cross-checks) → real server/client agents on a virtual screen → installers
-for Linux x64, Windows x64 and (with the macOS SDK, i.e. on the Mac) macOS, plus signed
-`SHA256SUMS` in `output-build/`. A failing step stops it before anything is packaged. Linux ARM64
-packages (built on GitHub's ARM runner before) are not built locally.
+**Public repo, public CI (R30, 2026-09-26).** The repository is public (MIT OR Apache-2.0), so
+GitHub's hosted runners are free, macOS included. `ci.yml` tests every pull request and every push
+to main natively on Linux x64, Windows x64 and macOS ARM64 (UI, rustfmt, cargo-deny, clippy, every
+Rust test, the Mac's real event-tap tests, real server/client agents); one required check
+("CI passed") gates merging. Only after it is green does a push to main publish "Nightly" and a
+v* tag a release (`release.yml`: macOS ARM64, Windows x64, Linux x64/ARM64, signed `SHA256SUMS`,
+build-provenance attestations). Hardening for public runs: read-only token by default, every action
+pinned to a commit SHA, no secrets for pull requests or forks (outside contributors' runs need
+approval), signing keys only in the `release` environment (main and v* tags), no caches in release
+builds, downloaded tools pinned by SHA-256. CodeQL, Scorecard, dependency review, a daily RustSec
+audit and Dependabot run alongside. The same pipeline also runs locally in Docker —
+`scripts/local-ci.sh` (`make ci`) — to check before pushing.
 
 The macOS build must run on a Mac runner: Apple's SDK licence forbids it on Linux hosts.
 

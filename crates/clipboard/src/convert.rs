@@ -3,8 +3,10 @@
 
 use std::io::Cursor;
 
-/// Refuse images whose decoded size would exceed this (denial-of-service guard).
-const MAX_PIXELS: u64 = 16_384 * 16_384;
+/// Refuse images whose decoded size would exceed this (denial-of-service guard:
+/// a few-KB PNG from a peer can declare any size). 8192² covers 8K and
+/// multi-monitor screenshots and bounds one decode to 256 MiB (+ the same for the DIB).
+const MAX_PIXELS: u64 = 8_192 * 8_192;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ConvertError {
@@ -233,6 +235,20 @@ mod tests {
         dec.next_frame(&mut buf).unwrap();
         assert_eq!(&buf[..4], &[255, 0, 0, 255]);
         assert_eq!(&buf[12..16], &[255, 255, 255, 128]);
+    }
+
+    #[test]
+    fn a_png_declaring_a_huge_size_is_refused_before_decoding() {
+        // A peer-supplied PNG header claiming 9000×9000 (~310 MiB decoded) with no pixel data.
+        let mut out = Vec::new();
+        {
+            let mut enc = png::Encoder::new(&mut out, 9_000, 9_000);
+            enc.set_color(png::ColorType::Rgba);
+            enc.set_depth(png::BitDepth::Eight);
+            let mut w = enc.write_header().unwrap();
+            w.write_chunk(png::chunk::IDAT, &[]).unwrap();
+        }
+        assert_eq!(png_to_dib(&out), Err(ConvertError::Image("image too large".into())));
     }
 
     #[test]

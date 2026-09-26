@@ -7,8 +7,12 @@
   tests → real agents → installers for every platform), or single steps with `make lint`,
   `make test-rust`, `make check-cross`, `make build-win`, `make build-mac`, `docker/run.sh <cmd>`.
   (`make` isn't installed on this Linux host: call the script / `docker/run.sh` directly.)
-- **No GitHub Actions.** GitHub only stores the code (workflows removed and disabled). Build and
-  test locally in Docker before every push; never add a workflow back without being asked.
+- **Public repo** (MIT OR Apache-2.0). GitHub Actions run publicly: `ci.yml` (tests on Linux,
+  Windows, macOS → required check "CI passed"), `release.yml` (called by CI: Nightly/tags),
+  CodeQL, Scorecard, dependency review, daily audit. Keep them hardened: actions pinned to SHAs,
+  `permissions: {}` + per-job minimum, no secrets outside the `release` environment, no caches in
+  release builds, lint with actionlint + zizmor. Still run `scripts/local-ci.sh test` before pushing.
+- Never commit secrets, personal data or machine names; `.signing/` stays private.
 - Output installers go to `output-build/`.
 - macOS SDK comes from `make sdk` (copied to `~/.cache/glidedesk/macos-sdk`, never committed).
 - Rust: edition 2024, `clippy -D warnings` with pedantic, no `unwrap`/`expect` outside tests,
