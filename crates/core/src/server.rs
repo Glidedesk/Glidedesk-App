@@ -282,6 +282,14 @@ impl Visit {
     }
 }
 
+/// `p` is at most a few pixels from an outer edge of these monitors (or there
+/// are none to tell): the only place a move can go to another computer.
+fn near_outer_edge(p: Point, monitors: &[MonitorInfo]) -> bool {
+    const NEAR: i32 = 3;
+    let inside = |q: Point| monitors.iter().any(|m| m.bounds.contains(q));
+    [(NEAR, 0), (-NEAR, 0), (0, NEAR), (0, -NEAR)].iter().any(|(dx, dy)| !inside(Point::new(p.x + dx, p.y + dy)))
+}
+
 /// Moves `p` `inset` pixels away from any outer edge of the monitor it is on.
 fn inset_from_edges(p: Point, monitors: &[MonitorInfo], inset: i32) -> Point {
     let Some(r) = monitors.iter().map(|m| m.bounds).find(|r| r.contains(p)) else { return p };
@@ -615,7 +623,11 @@ impl Hub {
                 let ctx = self.ctx();
                 let (out, dx, dy) = match self.engine.focus() {
                     Focus::Local => {
-                        let ctx = EdgeContext { fullscreen: self.fullscreen_blocked(), ..ctx };
+                        // Only an outer edge can switch: elsewhere the (costly) full-screen
+                        // check doesn't matter. Asked on every move, it copied the whole
+                        // window list twice a second while the mouse moved.
+                        let edge = near_outer_edge(pos, &self.local_monitors);
+                        let ctx = EdgeContext { fullscreen: edge && self.fullscreen_blocked(), ..ctx };
                         self.last_local_pos = pos;
                         // Never switch while a button is held: its release would be lost locally.
                         let (dx, dy) = if self.pressed.any_button() { (0, 0) } else { (dx, dy) };
@@ -1762,4 +1774,32 @@ fn sanitize_monitors(m: Vec<MonitorInfo>) -> Vec<MonitorInfo> {
             m
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glidedesk_proto::{MonitorId, Rect};
+
+    fn monitor(x: i32, w: i32, h: i32) -> MonitorInfo {
+        MonitorInfo {
+            id: MonitorId(x.to_string()),
+            name: String::new(),
+            bounds: Rect::new(x, 0, w, h),
+            scale: 1.0,
+            primary: x == 0,
+        }
+    }
+
+    #[test]
+    fn only_outer_edges_count_as_near_an_edge() {
+        let two = [monitor(0, 1440, 900), monitor(1440, 1920, 1080)];
+        assert!(!near_outer_edge(Point::new(700, 450), &two), "middle of a screen");
+        assert!(near_outer_edge(Point::new(0, 450), &two), "left edge");
+        assert!(near_outer_edge(Point::new(2, 450), &two), "within a few pixels");
+        assert!(!near_outer_edge(Point::new(1439, 450), &two), "between two screens is not outer");
+        assert!(near_outer_edge(Point::new(1439, 899), &two), "bottom of the shorter screen");
+        assert!(near_outer_edge(Point::new(3359, 500), &two), "right edge of the second screen");
+        assert!(near_outer_edge(Point::new(10, 10), &[]), "no monitors: always check");
+    }
 }

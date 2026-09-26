@@ -38,6 +38,11 @@ pub struct Agent {
     log_dir: String,
     /// Last permission check (`None` before the first one).
     permissions_ready: Option<bool>,
+    /// OS permissions as of the last check (every few seconds, see `run`).
+    /// Asking the OS on every status update cost a query to the permission
+    /// database (macOS) or a new X11 connection (Linux) each time — at least
+    /// once a second, as link latency changes.
+    perms: glidedesk_input::Permissions,
     /// Last start failure already reported (retries don't repeat the notice).
     last_failure: Option<String>,
 }
@@ -79,6 +84,7 @@ impl Agent {
             events,
             log_dir,
             permissions_ready: None,
+            perms: glidedesk_input::permissions(),
             last_failure: None,
         })
     }
@@ -203,7 +209,7 @@ impl Agent {
     // -----------------------------------------------------------------------
 
     fn publish(&self) {
-        let perms = glidedesk_input::permissions();
+        let perms = self.perms;
         let (server, client) = match &self.runtime {
             Runtime::Idle => (None, None),
             Runtime::Server(h) => (Some(h.status.borrow().clone()), None),
@@ -309,7 +315,8 @@ impl Agent {
     /// rights); revoked → stop with a clear message instead of leaking input.
     async fn on_permission_tick(&mut self) {
         let server = self.config.device.role == Role::Server;
-        let ready = glidedesk_input::permissions().ready(server);
+        self.perms = glidedesk_input::permissions();
+        let ready = self.perms.ready(server);
         let was = self.permissions_ready.replace(ready);
         if self.stopped || self.config.device.role == Role::Unset {
             return;
