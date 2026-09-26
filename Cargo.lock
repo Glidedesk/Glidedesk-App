@@ -1806,208 +1806,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "glidedesk-agent"
-version = "0.1.0"
-dependencies = [
- "glidedesk-clipboard",
- "glidedesk-config",
- "glidedesk-core",
- "glidedesk-input",
- "glidedesk-ipc",
- "glidedesk-net",
- "glidedesk-platform",
- "glidedesk-proto",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "glidedesk-app"
-version = "0.1.0"
-dependencies = [
- "glidedesk-agent",
- "glidedesk-config",
- "glidedesk-input",
- "glidedesk-ipc",
- "glidedesk-proto",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-dialog",
- "tauri-plugin-notification",
- "tauri-plugin-single-instance",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "windows 0.62.2",
-]
-
-[[package]]
-name = "glidedesk-clipboard"
-version = "0.1.0"
-dependencies = [
- "arboard",
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
- "png 0.18.1",
- "thiserror 2.0.21",
- "tracing",
- "windows 0.62.2",
-]
-
-[[package]]
-name = "glidedesk-config"
-version = "0.1.0"
-dependencies = [
- "directories",
- "getrandom 0.4.3",
- "glidedesk-layout",
- "glidedesk-proto",
- "serde",
- "tempfile",
- "thiserror 2.0.21",
- "time",
- "toml 1.1.6+spec-1.1.0",
-]
-
-[[package]]
-name = "glidedesk-core"
-version = "0.1.0"
-dependencies = [
- "getrandom 0.4.3",
- "glidedesk-clipboard",
- "glidedesk-config",
- "glidedesk-input",
- "glidedesk-ipc",
- "glidedesk-layout",
- "glidedesk-net",
- "glidedesk-platform",
- "glidedesk-proto",
- "glidedesk-transfer",
- "postcard",
- "quinn",
- "serde",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "glidedesk-input"
-version = "0.1.0"
-dependencies = [
- "evdev",
- "glidedesk-config",
- "glidedesk-layout",
- "glidedesk-proto",
- "objc2",
- "objc2-app-kit",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-foundation",
- "serde",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "windows 0.62.2",
- "x11rb 0.14.0",
-]
-
-[[package]]
-name = "glidedesk-ipc"
-version = "0.1.0"
-dependencies = [
- "glidedesk-config",
- "glidedesk-proto",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "windows 0.62.2",
-]
-
-[[package]]
-name = "glidedesk-layout"
-version = "0.1.0"
-dependencies = [
- "glidedesk-proto",
- "proptest",
- "serde",
-]
-
-[[package]]
-name = "glidedesk-net"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "blake3",
- "getrandom 0.4.3",
- "glidedesk-config",
- "glidedesk-proto",
- "hmac 0.13.0",
- "mdns-sd",
- "netdev",
- "quinn",
- "rcgen",
- "rustls",
- "serde",
- "sha2 0.11.0",
- "socket2",
- "spake2",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "glidedesk-platform"
-version = "0.1.0"
-dependencies = [
- "directories",
- "gethostname",
- "glidedesk-proto",
- "objc2",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-foundation",
- "windows 0.62.2",
-]
-
-[[package]]
-name = "glidedesk-proto"
-version = "0.1.0"
-dependencies = [
- "postcard",
- "serde",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "glidedesk-transfer"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "directories",
- "fs4",
- "postcard",
- "serde",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
-]
-
-[[package]]
 name = "glob"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2992,6 +2790,209 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
+
+[[package]]
+name = "nexpingdesk-agent"
+version = "0.1.0"
+dependencies = [
+ "nexpingdesk-clipboard",
+ "nexpingdesk-config",
+ "nexpingdesk-core",
+ "nexpingdesk-input",
+ "nexpingdesk-ipc",
+ "nexpingdesk-net",
+ "nexpingdesk-platform",
+ "nexpingdesk-proto",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "nexpingdesk-app"
+version = "0.1.0"
+dependencies = [
+ "nexpingdesk-agent",
+ "nexpingdesk-config",
+ "nexpingdesk-input",
+ "nexpingdesk-ipc",
+ "nexpingdesk-platform",
+ "nexpingdesk-proto",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-dialog",
+ "tauri-plugin-notification",
+ "tauri-plugin-single-instance",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "nexpingdesk-clipboard"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "png 0.18.1",
+ "thiserror 2.0.21",
+ "tracing",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "nexpingdesk-config"
+version = "0.1.0"
+dependencies = [
+ "directories",
+ "getrandom 0.4.3",
+ "nexpingdesk-layout",
+ "nexpingdesk-proto",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "time",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
+name = "nexpingdesk-core"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.4.3",
+ "nexpingdesk-clipboard",
+ "nexpingdesk-config",
+ "nexpingdesk-input",
+ "nexpingdesk-ipc",
+ "nexpingdesk-layout",
+ "nexpingdesk-net",
+ "nexpingdesk-platform",
+ "nexpingdesk-proto",
+ "nexpingdesk-transfer",
+ "postcard",
+ "quinn",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "nexpingdesk-input"
+version = "0.1.0"
+dependencies = [
+ "evdev",
+ "nexpingdesk-config",
+ "nexpingdesk-layout",
+ "nexpingdesk-proto",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation",
+ "serde",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "windows 0.62.2",
+ "x11rb 0.14.0",
+]
+
+[[package]]
+name = "nexpingdesk-ipc"
+version = "0.1.0"
+dependencies = [
+ "nexpingdesk-config",
+ "nexpingdesk-proto",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "nexpingdesk-layout"
+version = "0.1.0"
+dependencies = [
+ "nexpingdesk-proto",
+ "proptest",
+ "serde",
+]
+
+[[package]]
+name = "nexpingdesk-net"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "blake3",
+ "getrandom 0.4.3",
+ "hmac 0.13.0",
+ "mdns-sd",
+ "netdev",
+ "nexpingdesk-config",
+ "nexpingdesk-proto",
+ "quinn",
+ "rcgen",
+ "rustls",
+ "serde",
+ "sha2 0.11.0",
+ "socket2",
+ "spake2",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "nexpingdesk-platform"
+version = "0.1.0"
+dependencies = [
+ "directories",
+ "gethostname",
+ "nexpingdesk-proto",
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "nexpingdesk-proto"
+version = "0.1.0"
+dependencies = [
+ "postcard",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "nexpingdesk-transfer"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "directories",
+ "fs4",
+ "postcard",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
 
 [[package]]
 name = "nix"

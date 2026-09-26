@@ -12,13 +12,13 @@ pub struct Staging {
 }
 
 impl Staging {
-    /// Default: per-user cache folder `…/Glidedesk/Incoming`.
+    /// Default: per-user cache folder `…/Nexpingdesk/Incoming`.
     pub fn default_location() -> Option<Self> {
-        if let Some(home) = std::env::var_os("GLIDEDESK_HOME").filter(|h| !h.is_empty()) {
+        if let Some(home) = std::env::var_os("NEXPINGDESK_HOME").filter(|h| !h.is_empty()) {
             return Some(Self::at(PathBuf::from(home).join("incoming")));
         }
         let base = directories::BaseDirs::new()?;
-        Some(Self::at(base.cache_dir().join("Glidedesk").join("Incoming")))
+        Some(Self::at(base.cache_dir().join("Nexpingdesk").join("Incoming")))
     }
 
     #[must_use]

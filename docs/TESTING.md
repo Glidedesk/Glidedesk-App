@@ -8,22 +8,22 @@ Use the installers in `output-build/`.
 (client-a has two monitors of different sizes) connected over two dummy networks (`gd0`, `gd1`).
 The settings UI of each is at `http://localhost:5173/?agent=server` (`client-a`, `client-b`) —
 a dev-only bridge to each agent's socket, never part of a build. Useful checks:
-- move the cursor: `docker exec gd-lab sh -c 'DISPLAY=:1 xdotool mousemove 1900 300 mousemove_relative 60 0'`,
+- move the cursor: `docker exec nd-lab sh -c 'DISPLAY=:1 xdotool mousemove 1900 300 mousemove_relative 60 0'`,
   read it on a client: `DISPLAY=:2 xdotool getmouselocation`;
-- a network off/on: `docker exec gd-lab ip link set gd0 down` (warning, client-b stays online), `… up`;
-- restart agents after a rebuild: `docker exec gd-lab /src/docker/lab/restart.sh`; stop: `make lab-stop`.
+- a network off/on: `docker exec nd-lab ip link set gd0 down` (warning, client-b stays online), `… up`;
+- restart agents after a rebuild: `docker exec nd-lab /src/docker/lab/restart.sh`; stop: `make lab-stop`.
 
 ## Before you start
 - One **server** (the computer whose keyboard/mouse you use) and at least one **client**.
-- Same local network. Windows: allow Glidedesk on *Private* networks when asked.
+- Same local network. Windows: allow Nexpingdesk on *Private* networks when asked.
 - macOS: grant **Accessibility** (the only permission needed). The prompt and the list in
-  System Settings must show **Glidedesk** with its icon; after granting it, the Glidedesk
+  System Settings must show **Nexpingdesk** with its icon; after granting it, the Nexpingdesk
   window comes back to the front (it shows in the Dock while open).
 
 ## 1. Install
-- [ ] macOS: open the `.dmg`, drag Glidedesk to Applications, open it
+- [ ] macOS: open the `.dmg`, drag Nexpingdesk to Applications, open it
       (macOS 15+: System Settings → Privacy & Security → Open Anyway).
-- [ ] Windows: run `Glidedesk_<ver>_windows-x64-setup.exe` (SmartScreen: More info → Run anyway).
+- [ ] Windows: run `Nexpingdesk_<ver>_windows-x64-setup.exe` (SmartScreen: More info → Run anyway).
 - [ ] Windows Server / no internet: use `…_windows-x64-offline-setup.exe`.
 - [ ] First window shows the setup: choose Server or Client.
 
@@ -66,30 +66,30 @@ a dev-only bridge to each agent's socket, never part of a build. Useful checks:
 ## 5. Tray
 - [ ] Open the menu and leave it open for 30 s while clients are connected: it stays open.
 - [ ] Stop sharing → clients show the server offline; Start → they reconnect.
-- [ ] Restart Glidedesk → back within a few seconds.
-- [ ] Quit → both the tray icon and `glidedesk-agent` exit.
+- [ ] Restart Nexpingdesk → back within a few seconds.
+- [ ] Quit → both the tray icon and `nexpingdesk-agent` exit.
 
 ## 6. Upgrade & uninstall (Windows)
 - [ ] Install version A, then run the installer of version B: it says "Update", keeps settings,
-      and Glidedesk restarts by itself.
+      and Nexpingdesk restarts by itself.
 - [ ] Run the same version again: "Repair".
 - [ ] Silent: `setup.exe /S` upgrades without questions; exit code 0.
 - [ ] Uninstall → "Keep my settings" → reinstall → layout is still there.
-- [ ] Uninstall → "Remove my settings" → `%APPDATA%\Glidedesk` is gone.
+- [ ] Uninstall → "Remove my settings" → `%APPDATA%\Nexpingdesk` is gone.
 
 ## 7. Linux
-- [ ] `sudo apt install ./Glidedesk_<ver>_linux-<arch>.deb` (or `dnf install` the .rpm); open Glidedesk from the menu.
+- [ ] `sudo apt install ./Nexpingdesk_<ver>_linux-<arch>.deb` (or `dnf install` the .rpm); open Nexpingdesk from the menu.
 - [ ] Client role on **Wayland** (GNOME/KDE): the server can move the pointer, click and type here.
 - [ ] Server role on an **X11** session: moving off the edge reaches the other computer; on Wayland
       the app explains that the server role needs X11.
-- [ ] Log out and in: Glidedesk starts by itself (tray icon).
+- [ ] Log out and in: Nexpingdesk starts by itself (tray icon).
 - [ ] Clipboard text/image both ways; copy a folder in Files/Dolphin and paste on the other computer.
 
 ## 8. Uninstall (macOS)
-- [ ] Run "Uninstall Glidedesk" from the DMG → Keep / Remove settings both work.
+- [ ] Run "Uninstall Nexpingdesk" from the DMG → Keep / Remove settings both work.
 
 ## Self-test
-`Advanced → Run self-test` (or `glidedesk-agent --selftest`) prints permissions, monitors,
+`Advanced → Run self-test` (or `nexpingdesk-agent --selftest`) prints permissions, monitors,
 interfaces, capture/inject checks and encrypted loopback latency. Attach it to bug reports.
 
 ## Version 4 checks
@@ -97,7 +97,7 @@ interfaces, capture/inject checks and encrypted loopback latency. Attach it to b
 - [ ] Forget an online computer: it disappears and stays away; on it, Reconnect joins again.
 - [ ] Change an offline computer's mouse speed; when it comes online it uses the new speed
       (its window shows "Set by the server: …").
-- [ ] Copy files, restart Glidedesk, move to a client: they are **not** offered (Clipboard & Files →
+- [ ] Copy files, restart Nexpingdesk, move to a client: they are **not** offered (Clipboard & Files →
       Activity says why). Copy again: offered; nothing downloads until you paste there.
 - [ ] Network → Selected interfaces with two networks; switch one off: a warning, the other keeps working;
       switch it on: listening again within a few seconds.

@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use glidedesk_ipc::{AgentClient, AgentStatus, Endpoint, Event, IpcError, NoticeView, Request};
+use nexpingdesk_ipc::{AgentClient, AgentStatus, Endpoint, Event, IpcError, NoticeView, Request};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Mutex;
@@ -29,7 +29,7 @@ impl Link {
     }
 
     pub async fn request(&self, req: Request) -> Result<Value, String> {
-        let client = self.client.lock().await.clone().ok_or_else(|| "Glidedesk agent is starting…".to_owned())?;
+        let client = self.client.lock().await.clone().ok_or_else(|| "Nexpingdesk agent is starting…".to_owned())?;
         client.request(req).await.map_err(|e| e.to_string())
     }
 }
@@ -37,7 +37,7 @@ impl Link {
 fn spawn_agent() {
     // The agent is this same executable in background mode.
     let Ok(path) = std::env::current_exe() else {
-        warn!("cannot find the Glidedesk executable");
+        warn!("cannot find the Nexpingdesk executable");
         return;
     };
     let mut cmd = Command::new(&path);
@@ -147,8 +147,8 @@ fn on_notice(app: &AppHandle, n: &NoticeView) {
         NoticeView::ServerConnected { name } => {
             ("Connected".to_owned(), format!("This computer is now controlled by {name}."))
         }
-        NoticeView::Error { message } => ("Glidedesk problem".to_owned(), message.clone()),
-        NoticeView::Info { message } => ("Glidedesk".to_owned(), message.clone()),
+        NoticeView::Error { message } => ("Nexpingdesk problem".to_owned(), message.clone()),
+        NoticeView::Info { message } => ("Nexpingdesk".to_owned(), message.clone()),
     };
     let _ = app.emit("agent-notice", n);
     if crate::notifications_enabled(app) {

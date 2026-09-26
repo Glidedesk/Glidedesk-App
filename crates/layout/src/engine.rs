@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-use glidedesk_proto::{DeviceId, MonitorInfo, Point, Rect, Side};
+use nexpingdesk_proto::{DeviceId, MonitorInfo, Point, Rect, Side};
 
 use crate::edges::{EdgeRun, select};
 use crate::guard::{Decision, EdgeContext, GuardState, SwitchPolicy};

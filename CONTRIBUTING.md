@@ -1,4 +1,4 @@
-# Contributing to Glidedesk
+# Contributing to Nexpingdesk
 
 Thanks for helping! Bug reports, fixes and ideas are all welcome.
 
@@ -14,7 +14,7 @@ Everything builds and runs in Docker, so you only need Docker and a POSIX shell:
 ```sh
 scripts/local-ci.sh test       # UI + rustfmt + clippy + all Rust tests + cross-checks
 scripts/local-ci.sh            # tests → real agents on a virtual screen → installers in output-build/
-docker/run.sh cargo nextest run -p glidedesk-core   # any single command inside the builder image
+docker/run.sh cargo nextest run -p nexpingdesk-core   # any single command inside the builder image
 ```
 
 The macOS app and the Mac's real event-tap tests need a Mac (Apple's SDK licence); CI runs them
@@ -28,11 +28,11 @@ on GitHub's macOS runners for every pull request.
 - **Every network input is untrusted** (there's no mandatory authentication, see [SECURITY.md](SECURITY.md)):
   limit sizes, never panic on peer data, keep file paths inside their destination.
 - Add a test for every fix and feature. Tests that touch settings use a temporary
-  `GLIDEDESK_HOME`, never the real one.
+  `NEXPINGDESK_HOME`, never the real one.
 - Keep commits focused, with a message that says what changed and why.
 
 ## Licence
 
-Glidedesk is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your
+Nexpingdesk is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your
 option. Unless you say otherwise, any contribution you submit is licensed the same way, without
 additional terms.

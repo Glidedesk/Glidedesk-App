@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # Real-agent smoke test on the machine it runs on (Linux, macOS, Windows/Git Bash):
 # a server agent and a client agent talk over loopback, each with its own
-# GLIDEDESK_HOME (nothing real is touched). Checks:
+# NEXPINGDESK_HOME (nothing real is touched). Checks:
 #   1. the client connects;
 #   2. the client restarts gracefully (--shutdown) and reconnects — the server keeps running;
 #   3. the client is killed (no goodbye) and reconnects;
 #   4. --selftest runs and prints its report.
-# Usage: scripts/os-smoke.sh path/to/glidedesk[.exe]
+# Usage: scripts/os-smoke.sh path/to/nexpingdesk[.exe]
 # Exit 0 = passed; 2 = the OS refused keyboard/mouse access (reported, e.g. a
 # macOS runner without Accessibility); anything else = failure.
 set -u
-BIN=${1:?usage: os-smoke.sh path/to/glidedesk}
+BIN=${1:?usage: os-smoke.sh path/to/nexpingdesk}
 BIN=$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")
-PORT=${GLIDEDESK_SMOKE_PORT:-24871}
-WORK=$(mktemp -d "${TMPDIR:-/tmp}/gd-smoke.XXXXXX")
+PORT=${NEXPINGDESK_SMOKE_PORT:-24871}
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/nd-smoke.XXXXXX")
 SRV=$WORK/server
 CLI=$WORK/client
 PIDS=()
@@ -49,7 +49,7 @@ conf "$CLI" client "[client]
 server_address = \"127.0.0.1:$PORT\""
 
 start() { # home logfile
-  GLIDEDESK_HOME="$1" RUST_LOG="info,glidedesk_core=debug" NO_COLOR=1 "$BIN" --agent >>"$2" 2>&1 &
+  NEXPINGDESK_HOME="$1" RUST_LOG="info,nexpingdesk_core=debug" NO_COLOR=1 "$BIN" --agent >>"$2" 2>&1 &
   LAST=$!
   PIDS+=("$LAST")
 }
@@ -91,7 +91,7 @@ echo "ok"
 
 say "2. graceful client restart (server keeps running)"
 n=$(count "$SRV.out" "client connected")
-GLIDEDESK_HOME="$CLI" "$BIN" --shutdown || true
+NEXPINGDESK_HOME="$CLI" "$BIN" --shutdown || true
 wait_more "$SRV.out" "client disconnected" 0 15 || fail "server did not see the client leave"
 wait "$CLI_PID" 2>/dev/null
 start "$CLI" "$CLI.out"
@@ -110,14 +110,14 @@ kill -0 "$SRV_PID" 2>/dev/null || fail "the server stopped"
 echo "ok"
 
 say "4. self-test"
-GLIDEDESK_HOME="$WORK/selftest" "$BIN" --selftest >"$WORK/selftest.json" 2>&1
+NEXPINGDESK_HOME="$WORK/selftest" "$BIN" --selftest >"$WORK/selftest.json" 2>&1
 head -c 4000 "$WORK/selftest.json"
 echo
 [ -s "$WORK/selftest.json" ] || fail "self-test printed nothing"
 
 say "shutting down"
-GLIDEDESK_HOME="$CLI" "$BIN" --shutdown || true
-GLIDEDESK_HOME="$SRV" "$BIN" --shutdown || true
+NEXPINGDESK_HOME="$CLI" "$BIN" --shutdown || true
+NEXPINGDESK_HOME="$SRV" "$BIN" --shutdown || true
 sleep 1
 grep -hE "WARN|ERROR" "$SRV.out" "$CLI.out" | grep -viE "clipboard|mDNS|arboard" | head -20
 echo

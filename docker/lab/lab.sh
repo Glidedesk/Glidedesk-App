@@ -1,12 +1,12 @@
 #!/bin/sh
-# Starts the lab inside glidedesk-lab (see docker/lab/Dockerfile):
+# Starts the lab inside nexpingdesk-lab (see docker/lab/Dockerfile):
 #   server   on X display :1 (one 1920x1080 screen), listening on gd0 + gd1
 #   client-a on X display :2 (two screens: 1920x1080 + 1280x1024 on its right) via gd0
 #   client-b on X display :3 (one 1600x900 screen) via gd1
 # plus `vite dev` with the agent bridge on :5173 for browser QA.
-# Every instance has its own GLIDEDESK_HOME under /lab — nothing real is touched.
+# Every instance has its own NEXPINGDESK_HOME under /lab — nothing real is touched.
 set -eu
-BIN=${GLIDEDESK_BIN:-/cache/target/debug/glidedesk}
+BIN=${NEXPINGDESK_BIN:-/cache/target/debug/nexpingdesk}
 LAB=/lab
 mkdir -p "$LAB"
 
@@ -46,7 +46,7 @@ conf client-b client '[client]
 server_address = "10.78.0.1"'
 
 start() { # name display
-  GLIDEDESK_HOME="$LAB/$1" DISPLAY="$2" RUST_LOG=info,glidedesk_core=debug \
+  NEXPINGDESK_HOME="$LAB/$1" DISPLAY="$2" RUST_LOG=info,nexpingdesk_core=debug \
     nohup "$BIN" --agent >"$LAB/$1.out" 2>&1 &
   echo $! >"$LAB/$1.pid"
 }
@@ -57,7 +57,7 @@ start client-b :3
 
 if [ "${LAB_UI:-1}" = 1 ]; then
   cd /src/app/ui
-  GLIDEDESK_DEV_AGENTS="server=$LAB/server/config/agent.sock,client-a=$LAB/client-a/config/agent.sock,client-b=$LAB/client-b/config/agent.sock" \
+  NEXPINGDESK_DEV_AGENTS="server=$LAB/server/config/agent.sock,client-a=$LAB/client-a/config/agent.sock,client-b=$LAB/client-b/config/agent.sock" \
     nohup pnpm exec vite --host 0.0.0.0 --port 5173 --strictPort >"$LAB/vite.out" 2>&1 &
 fi
 echo "lab up"

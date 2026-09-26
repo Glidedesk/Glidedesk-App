@@ -5,7 +5,7 @@
 //! to a neighbour. An *edge run* is the ordered list of outer
 //! segments that take part in one link.
 
-use glidedesk_proto::{MonitorInfo, Point, Rect, Side};
+use nexpingdesk_proto::{MonitorInfo, Point, Rect, Side};
 
 use crate::model::{HandoverMode, MonitorSelection};
 
@@ -245,7 +245,7 @@ impl EdgeRun {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glidedesk_proto::MonitorId;
+    use nexpingdesk_proto::MonitorId;
 
     fn mon(id: &str, r: Rect) -> MonitorInfo {
         MonitorInfo { id: MonitorId(id.into()), name: id.into(), bounds: r, scale: 1.0, primary: false }

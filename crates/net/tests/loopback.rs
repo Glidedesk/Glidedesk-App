@@ -4,9 +4,9 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
-use glidedesk_config::IpFilter;
-use glidedesk_net::*;
-use glidedesk_proto::{Control, Input, KeyCode, MAX_CONTROL_FRAME, MAX_INPUT_FRAME};
+use nexpingdesk_config::IpFilter;
+use nexpingdesk_net::*;
+use nexpingdesk_proto::{Control, Input, KeyCode, MAX_CONTROL_FRAME, MAX_INPUT_FRAME};
 
 fn localhost(port: u16) -> BindPlan {
     BindPlan::Addrs(vec![SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)])
@@ -25,7 +25,9 @@ async fn control_and_input_streams_roundtrip() {
         let mut w = FrameWriter::new(send, MAX_CONTROL_FRAME);
         let msg: Control = r.recv().await.unwrap().unwrap();
         assert_eq!(msg, Control::Ping { seq: 1, sent_us: 2, rtt_us: 0 });
-        w.send(&Control::Pong { seq: 1, sent_us: 2, status: glidedesk_proto::ClientStatus::default() }).await.unwrap();
+        w.send(&Control::Pong { seq: 1, sent_us: 2, status: nexpingdesk_proto::ClientStatus::default() })
+            .await
+            .unwrap();
         let mut input = FrameWriter::new(conn.open_uni().await.unwrap(), MAX_INPUT_FRAME);
         let keys: Vec<Input> = (0..100).map(|i| Input::Key { key: KeyCode(i), down: i % 2 == 0 }).collect();
         input.send_batch(&keys).await.unwrap();

@@ -1,4 +1,4 @@
-//! Glidedesk wire protocol.
+//! Nexpingdesk wire protocol.
 //!
 //! Every QUIC stream carries length-prefixed [`postcard`] frames:
 //! `u32 little-endian length` followed by the encoded message. Frame sizes
@@ -25,12 +25,12 @@ pub use geom::{Point, Rect, Side};
 /// in the server's scrolling direction; `Forgotten` / `REJOIN`.
 pub const PROTOCOL_VERSION: u16 = 3;
 /// QUIC/TLS ALPN. Kept at 1 across protocol versions so an older peer still
-/// connects far enough to be told "update Glidedesk" (`Hello.protocol` decides).
-pub const ALPN: &[u8] = b"glidedesk/1";
+/// connects far enough to be told "update Nexpingdesk" (`Hello.protocol` decides).
+pub const ALPN: &[u8] = b"nexpingdesk/1";
 /// Default UDP port.
 pub const DEFAULT_PORT: u16 = 24_850;
 /// mDNS service type.
-pub const MDNS_SERVICE: &str = "_glidedesk._udp.local.";
+pub const MDNS_SERVICE: &str = "_nexpingdesk._udp.local.";
 
 /// Largest control frame we accept (monitor lists, settings, status).
 pub const MAX_CONTROL_FRAME: usize = 256 * 1024;
@@ -262,7 +262,7 @@ pub mod stream_kind {
     /// Unidirectional: a [`super::FileOffer`] (names and sizes, no data).
     pub const OFFER: u8 = 3;
     /// Bidirectional, opened by the receiver when the user pastes: `u64 set id`
-    /// out, the file set (`glidedesk_transfer` wire format) back.
+    /// out, the file set (`nexpingdesk_transfer` wire format) back.
     pub const FETCH: u8 = 4;
 }
 

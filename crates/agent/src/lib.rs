@@ -1,6 +1,6 @@
 //! The background agent that shares the keyboard and mouse. It is not a
-//! separate program: the Glidedesk app runs it in a second copy of itself
-//! (`glidedesk --agent`) and talks to it over a private local socket.
+//! separate program: the Nexpingdesk app runs it in a second copy of itself
+//! (`nexpingdesk --agent`) and talks to it over a private local socket.
 //!
 //! Entry points used by the app's `main`: [`run_agent`], [`run_selftest`],
 //! [`shutdown_running_agent`].
@@ -16,8 +16,8 @@ mod state;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use glidedesk_config::{ConfigStore, LogLevel};
-use glidedesk_ipc::{AgentClient, AgentStatus, Endpoint, Request};
+use nexpingdesk_config::{ConfigStore, LogLevel};
+use nexpingdesk_ipc::{AgentClient, AgentStatus, Endpoint, Request};
 use tokio::sync::{broadcast, mpsc, watch};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
@@ -36,8 +36,8 @@ fn level(l: LogLevel) -> &'static str {
 
 /// Rotating log files (5 × daily) + stderr in debug builds.
 fn init_logging(dir: &std::path::Path, lvl: LogLevel) -> Option<tracing_appender::non_blocking::WorkerGuard> {
-    let filter = EnvFilter::try_from_env("GLIDEDESK_LOG")
-        .unwrap_or_else(|_| EnvFilter::new(format!("warn,glidedesk={0},glidedesk_agent={0}", level(lvl))));
+    let filter = EnvFilter::try_from_env("NEXPINGDESK_LOG")
+        .unwrap_or_else(|_| EnvFilter::new(format!("warn,nexpingdesk={0},nexpingdesk_agent={0}", level(lvl))));
     let _ = std::fs::create_dir_all(dir);
     let appender = tracing_appender::rolling::Builder::new()
         .rotation(tracing_appender::rolling::Rotation::DAILY)
@@ -72,25 +72,25 @@ async fn shutdown_running() -> ExitCode {
     ExitCode::FAILURE
 }
 
-/// Prints the self-test report as JSON (`glidedesk --selftest`).
+/// Prints the self-test report as JSON (`nexpingdesk --selftest`).
 pub fn run_selftest() -> ExitCode {
-    glidedesk_input::init_process();
+    nexpingdesk_input::init_process();
     let report = selftest::run(false);
     println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
     ExitCode::SUCCESS
 }
 
-/// Asks a running agent to quit and waits (`glidedesk --shutdown`; used by installers).
+/// Asks a running agent to quit and waits (`nexpingdesk --shutdown`; used by installers).
 pub fn shutdown_running_agent() -> ExitCode {
     let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() else { return ExitCode::FAILURE };
     rt.block_on(shutdown_running())
 }
 
-/// Runs the agent until it is told to quit (`glidedesk --agent`).
+/// Runs the agent until it is told to quit (`nexpingdesk --agent`).
 pub fn run_agent() -> ExitCode {
-    glidedesk_input::init_process();
+    nexpingdesk_input::init_process();
     let Ok(rt) =
-        tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().thread_name("gd-agent").build()
+        tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().thread_name("nd-agent").build()
     else {
         eprintln!("cannot start async runtime");
         return ExitCode::FAILURE;
@@ -103,7 +103,7 @@ pub fn run_agent() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let log_dir = glidedesk_platform::log_dir();
+    let log_dir = nexpingdesk_platform::log_dir();
     let peek_level = store_peek_level(&store);
     let _guard = init_logging(&log_dir, peek_level);
     info!(version = agent::VERSION, "agent starting");
@@ -116,7 +116,7 @@ pub fn run_agent() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        let listener = match glidedesk_ipc::transport::Listener::bind(&ep).await {
+        let listener = match nexpingdesk_ipc::transport::Listener::bind(&ep).await {
             Ok(l) => l,
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
                 info!("another agent is already running");
@@ -155,5 +155,5 @@ fn store_peek_level(store: &ConfigStore) -> LogLevel {
 }
 
 mod toml_peek {
-    pub use glidedesk_config::__toml::Table;
+    pub use nexpingdesk_config::__toml::Table;
 }

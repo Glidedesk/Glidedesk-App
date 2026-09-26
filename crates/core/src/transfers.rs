@@ -4,8 +4,8 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use glidedesk_ipc::views::{TransferState, TransferView};
-use glidedesk_transfer::Progress;
+use nexpingdesk_ipc::views::{TransferState, TransferView};
+use nexpingdesk_transfer::Progress;
 
 const KEEP_FINISHED: Duration = Duration::from_secs(60);
 

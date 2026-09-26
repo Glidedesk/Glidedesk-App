@@ -1,5 +1,5 @@
 [package]
-name = "glidedesk-transfer"
+name = "nexpingdesk-transfer"
 description = "Streaming file sets with verification and safe staging"
 version.workspace = true
 edition.workspace = true

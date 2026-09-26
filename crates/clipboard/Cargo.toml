@@ -1,5 +1,5 @@
 [package]
-name = "glidedesk-clipboard"
+name = "nexpingdesk-clipboard"
 description = "System clipboard access and format conversions"
 version.workspace = true
 edition.workspace = true

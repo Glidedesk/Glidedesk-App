@@ -6,8 +6,8 @@
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-use glidedesk_layout::{LinkSpec, SwitchPolicy};
-use glidedesk_proto::{DEFAULT_PORT, DeviceId};
+use nexpingdesk_layout::{LinkSpec, SwitchPolicy};
+use nexpingdesk_proto::{DEFAULT_PORT, DeviceId};
 use serde::{Deserialize, Serialize};
 
 /// Current schema version written by this build.

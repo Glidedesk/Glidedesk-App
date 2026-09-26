@@ -1,6 +1,6 @@
 //! Persisted layout description (lives in `config.toml`).
 
-use glidedesk_proto::{DeviceId, MonitorId, Side};
+use nexpingdesk_proto::{DeviceId, MonitorId, Side};
 use serde::{Deserialize, Serialize};
 
 /// Which monitors of a machine take part in a link.

@@ -9,19 +9,19 @@ edition = "2024"
 rust-version = "1.90"
 license = "MIT OR Apache-2.0"
 publish = false
-authors = ["Glidedesk"]
+authors = ["Nexpingdesk"]
 
 [workspace.dependencies]
-glidedesk-proto = { path = "crates/proto" }
-glidedesk-layout = { path = "crates/layout" }
-glidedesk-config = { path = "crates/config" }
-glidedesk-input = { path = "crates/input" }
-glidedesk-net = { path = "crates/net" }
-glidedesk-ipc = { path = "crates/ipc" }
-glidedesk-platform = { path = "crates/platform" }
-glidedesk-core = { path = "crates/core" }
-glidedesk-clipboard = { path = "crates/clipboard" }
-glidedesk-transfer = { path = "crates/transfer" }
+nexpingdesk-proto = { path = "crates/proto" }
+nexpingdesk-layout = { path = "crates/layout" }
+nexpingdesk-config = { path = "crates/config" }
+nexpingdesk-input = { path = "crates/input" }
+nexpingdesk-net = { path = "crates/net" }
+nexpingdesk-ipc = { path = "crates/ipc" }
+nexpingdesk-platform = { path = "crates/platform" }
+nexpingdesk-core = { path = "crates/core" }
+nexpingdesk-clipboard = { path = "crates/clipboard" }
+nexpingdesk-transfer = { path = "crates/transfer" }
 
 anyhow = "1.0.104"
 blake3 = { version = "1.8.7", features = ["pure"] }

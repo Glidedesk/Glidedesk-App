@@ -1,4 +1,4 @@
-//! `glidedesk-agent --selftest` and the UI "Diagnostics → Run self-test":
+//! `nexpingdesk-agent --selftest` and the UI "Diagnostics → Run self-test":
 //! repeatable checks for real-machine testing.
 
 use std::time::Instant;
@@ -7,14 +7,14 @@ use serde_json::{Value, json};
 
 pub fn run(server_running: bool) -> Value {
     let started = Instant::now();
-    let perms = glidedesk_input::permissions();
-    let monitors = glidedesk_input::monitors();
-    let interfaces = glidedesk_net::list_interfaces();
+    let perms = nexpingdesk_input::permissions();
+    let monitors = nexpingdesk_input::monitors();
+    let interfaces = nexpingdesk_net::list_interfaces();
     // Capture can only be tested when the server is not already capturing.
     let capture = if server_running {
         json!({ "ok": true, "note": "server running (capture in use)" })
     } else {
-        match glidedesk_input::start_capture() {
+        match nexpingdesk_input::start_capture() {
             Ok(c) => {
                 c.control.stop();
                 json!({ "ok": true })
@@ -22,11 +22,11 @@ pub fn run(server_running: bool) -> Value {
             Err(e) => json!({ "ok": false, "error": e.to_string() }),
         }
     };
-    let injector = match glidedesk_input::injector() {
+    let injector = match nexpingdesk_input::injector() {
         Ok(mut inj) => {
             // Harmless round trip: read the cursor and "move" it where it already is.
             let before = inj.cursor();
-            let moved = before.map(|p| inj.inject(&glidedesk_proto::Input::MouseAbs(p)).is_ok());
+            let moved = before.map(|p| inj.inject(&nexpingdesk_proto::Input::MouseAbs(p)).is_ok());
             json!({ "ok": true, "cursor": before, "inject_move": moved })
         }
         Err(e) => json!({ "ok": false, "error": e.to_string() }),
@@ -34,14 +34,14 @@ pub fn run(server_running: bool) -> Value {
     let loopback = loopback_latency();
     json!({
         "version": crate::agent::VERSION,
-        "platform": glidedesk_proto::Platform::current(),
-        "host": glidedesk_platform::host_name(),
+        "platform": nexpingdesk_proto::Platform::current(),
+        "host": nexpingdesk_platform::host_name(),
         "permissions": { "accessibility": perms.accessibility, "input_monitoring": perms.input_monitoring },
         "monitors": monitors.map_err(|e| e.to_string()),
         "interfaces": interfaces,
         "capture": capture,
         "injector": injector,
-        "session": glidedesk_platform::session_status(),
+        "session": nexpingdesk_platform::session_status(),
         "loopback_quic_ms": loopback,
         "took_ms": started.elapsed().as_millis(),
     })
@@ -53,8 +53,8 @@ fn loopback_latency() -> Value {
         return Value::Null;
     };
     rt.block_on(async {
-        let plan = glidedesk_net::BindPlan::Addrs(vec![std::net::SocketAddr::from(([127, 0, 0, 1], 0))]);
-        let Ok((mut server, _)) = glidedesk_net::Server::bind(&plan, glidedesk_net::Tuning::default()) else {
+        let plan = nexpingdesk_net::BindPlan::Addrs(vec![std::net::SocketAddr::from(([127, 0, 0, 1], 0))]);
+        let Ok((mut server, _)) = nexpingdesk_net::Server::bind(&plan, nexpingdesk_net::Tuning::default()) else {
             return Value::Null;
         };
         let Some(addr) = server.local_addrs().first().copied() else { return Value::Null };
@@ -72,10 +72,10 @@ fn loopback_latency() -> Value {
                 let _ = conn.closed().await;
             }
         });
-        let Ok(ep) = glidedesk_net::client_endpoint(None, glidedesk_net::Tuning::default()) else {
+        let Ok(ep) = nexpingdesk_net::client_endpoint(None, nexpingdesk_net::Tuning::default()) else {
             return Value::Null;
         };
-        let Ok(conn) = glidedesk_net::connect(&ep, addr).await else { return Value::Null };
+        let Ok(conn) = nexpingdesk_net::connect(&ep, addr).await else { return Value::Null };
         let Ok((mut s, mut r)) = conn.open_bi().await else { return Value::Null };
         let mut samples = Vec::new();
         let mut b = [7u8; 1];

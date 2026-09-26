@@ -4,7 +4,7 @@
 //! files are fetched and put on the clipboard, then the paste is replayed so the
 //! file manager copies them itself.
 
-use glidedesk_proto::{KeyCode, Platform};
+use nexpingdesk_proto::{KeyCode, Platform};
 
 use crate::keymap::hid;
 use crate::modifiers::Pressed;

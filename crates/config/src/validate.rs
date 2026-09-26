@@ -59,7 +59,7 @@ impl Config {
 
         let net = &mut self.server.network;
         if net.port == 0 {
-            net.port = glidedesk_proto::DEFAULT_PORT;
+            net.port = nexpingdesk_proto::DEFAULT_PORT;
             i.push(Issue::new("server.network.port", "port 0 is not allowed; using the default"));
         }
         // IPv4 only: an IPv6 listen address can never be bound.
@@ -67,7 +67,7 @@ impl Config {
             if a.is_ipv4() {
                 return true;
             }
-            i.push(Issue::new("server.network.addresses", format!("dropped {a}: Glidedesk uses IPv4 only")));
+            i.push(Issue::new("server.network.addresses", format!("dropped {a}: Nexpingdesk uses IPv4 only")));
             false
         });
         let mut seen_if = HashSet::new();
@@ -134,7 +134,7 @@ pub fn is_mac_address(s: &str) -> bool {
 mod tests {
     use super::*;
     use crate::schema::ClientEntry;
-    use glidedesk_proto::DeviceId;
+    use nexpingdesk_proto::DeviceId;
 
     #[test]
     fn defaults_are_valid() {

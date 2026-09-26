@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use glidedesk_proto::{Input, LedState, Point};
+use nexpingdesk_proto::{Input, LedState, Point};
 use tokio::sync::mpsc;
 
 use crate::{CAPTURE_QUEUE, Capture, CaptureControl, CaptureEvent, Injector, InputError, Pressed};
@@ -13,7 +13,7 @@ pub enum ControlCall {
     Warp(Point),
     Stop,
     PasteHold(bool),
-    ReplayPaste(glidedesk_proto::KeyCode),
+    ReplayPaste(nexpingdesk_proto::KeyCode),
 }
 
 #[derive(Debug, Default)]
@@ -42,7 +42,7 @@ impl CaptureControl for MockControl {
     fn holds_paste(&self) -> bool {
         true
     }
-    fn replay_paste(&self, key: glidedesk_proto::KeyCode) {
+    fn replay_paste(&self, key: nexpingdesk_proto::KeyCode) {
         self.calls.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(ControlCall::ReplayPaste(key));
     }
 }

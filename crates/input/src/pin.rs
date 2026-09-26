@@ -17,7 +17,7 @@
 //! Getting this wrong sent a fast mouse (many events, big steps) backwards by
 //! the jump every few events, so it hardly moved on the other computer.
 
-use glidedesk_proto::{Point, Rect};
+use nexpingdesk_proto::{Point, Rect};
 
 /// The smallest drift (points) from the pin that is pulled back.
 pub const PIN_RADIUS: i32 = 80;

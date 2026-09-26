@@ -1,8 +1,8 @@
-# Glidedesk — every build and code test runs inside the glidedesk-builder
+# Nexpingdesk — every build and code test runs inside the nexpingdesk-builder
 # container. Output lands in output-build/.
 
 RUN := docker/run.sh
-IMAGE := glidedesk-builder:latest
+IMAGE := nexpingdesk-builder:latest
 CROSS_TARGETS := aarch64-apple-darwin x86_64-pc-windows-msvc
 
 .PHONY: help ci signing-keys docker-image sdk shell fmt lint test test-rust test-ui check-cross build-win build-mac build-linux release clean lab lab-stop os-smoke
@@ -70,20 +70,20 @@ clean:
 # Real end-to-end lab: server + two Linux clients (one with two monitors) on virtual X screens and
 # dummy networks, settings UI at http://localhost:5173/?agent=server (client-a, client-b).
 lab:
-	$(RUN) cargo build -p glidedesk-app
-	docker build -q -t glidedesk-lab -f docker/lab/Dockerfile docker/lab
-	docker rm -f gd-lab >/dev/null 2>&1 || true
-	docker run -d --name gd-lab --cap-add NET_ADMIN -p 127.0.0.1:5173:5173 -v "$(CURDIR):/src" \
-	  -v gd-cargo-registry:/usr/local/cargo/registry -v gd-cargo-git:/usr/local/cargo/git -v gd-cache:/cache \
-	  -w /src glidedesk-lab:latest sh -c 'cd app/ui && pnpm install --frozen-lockfile >/dev/null 2>&1; /src/docker/lab/lab.sh && sleep infinity'
+	$(RUN) cargo build -p nexpingdesk-app
+	docker build -q -t nexpingdesk-lab -f docker/lab/Dockerfile docker/lab
+	docker rm -f nd-lab >/dev/null 2>&1 || true
+	docker run -d --name nd-lab --cap-add NET_ADMIN -p 127.0.0.1:5173:5173 -v "$(CURDIR):/src" \
+	  -v nd-cargo-registry:/usr/local/cargo/registry -v nd-cargo-git:/usr/local/cargo/git -v nd-cache:/cache \
+	  -w /src nexpingdesk-lab:latest sh -c 'cd app/ui && pnpm install --frozen-lockfile >/dev/null 2>&1; /src/docker/lab/lab.sh && sleep infinity'
 
 lab-stop:
-	docker rm -f gd-lab
+	docker rm -f nd-lab
 
 # Real server + client agents over loopback (connect, client restarts, self-test) on a
 # virtual X screen — the same script CI runs on Linux, Windows and macOS on every push.
 os-smoke:
-	$(RUN) sh -c 'cd app/ui && pnpm install --frozen-lockfile >/dev/null && pnpm build >/dev/null && cd /src && cargo build -p glidedesk-app'
-	docker build -q -t glidedesk-lab -f docker/lab/Dockerfile docker/lab
-	docker run --rm -v "$(CURDIR):/src" -v gd-cache:/cache -w /src glidedesk-lab:latest \
-	  sh -c 'Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp >/dev/null 2>&1 & sleep 1; DISPLAY=:99 bash scripts/os-smoke.sh /cache/target/debug/glidedesk'
+	$(RUN) sh -c 'cd app/ui && pnpm install --frozen-lockfile >/dev/null && pnpm build >/dev/null && cd /src && cargo build -p nexpingdesk-app'
+	docker build -q -t nexpingdesk-lab -f docker/lab/Dockerfile docker/lab
+	docker run --rm -v "$(CURDIR):/src" -v nd-cache:/cache -w /src nexpingdesk-lab:latest \
+	  sh -c 'Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp >/dev/null 2>&1 & sleep 1; DISPLAY=:99 bash scripts/os-smoke.sh /cache/target/debug/nexpingdesk'

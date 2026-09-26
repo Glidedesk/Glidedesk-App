@@ -2,8 +2,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Real socket: listener + client, request/response and pushed events.
 
-use glidedesk_ipc::transport::{Listener, read_line, write_line};
-use glidedesk_ipc::{AgentClient, Endpoint, Event, Message, NoticeView, Request, RequestEnvelope};
+use nexpingdesk_ipc::transport::{Listener, read_line, write_line};
+use nexpingdesk_ipc::{AgentClient, Endpoint, Event, Message, NoticeView, Request, RequestEnvelope};
 use tokio::io::BufReader;
 
 #[tokio::test]
@@ -51,7 +51,7 @@ async fn oversized_lines_are_refused() {
     let (a, b) = tokio::io::duplex(64 * 1024);
     let writer = tokio::spawn(async move {
         let mut b = b;
-        let big = vec![b'x'; glidedesk_ipc::transport::MAX_LINE + 10];
+        let big = vec![b'x'; nexpingdesk_ipc::transport::MAX_LINE + 10];
         let _ = tokio::io::AsyncWriteExt::write_all(&mut b, &big).await;
     });
     let mut r = BufReader::new(a);

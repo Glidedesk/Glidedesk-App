@@ -5,11 +5,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use glidedesk_config::{BindMode, Config, Role};
-use glidedesk_core::{ClientDeps, HealthState, LinkState, ServerCommand, ServerDeps, client, server};
-use glidedesk_input::mock::{self, ControlCall, MockInjector};
-use glidedesk_input::{CaptureEvent, InputError};
-use glidedesk_proto::{DeviceId, GoodbyeReason, Input, KeyCode, MonitorId, MonitorInfo, Point, Rect};
+use nexpingdesk_config::{BindMode, Config, Role};
+use nexpingdesk_core::{ClientDeps, HealthState, LinkState, ServerCommand, ServerDeps, client, server};
+use nexpingdesk_input::mock::{self, ControlCall, MockInjector};
+use nexpingdesk_input::{CaptureEvent, InputError};
+use nexpingdesk_proto::{DeviceId, GoodbyeReason, Input, KeyCode, MonitorId, MonitorInfo, Point, Rect};
 
 const SERVER_ID: DeviceId = DeviceId([0x11; 16]);
 const CLIENT_ID: DeviceId = DeviceId([0x22; 16]);
@@ -24,7 +24,7 @@ fn monitor(w: i32, h: i32) -> Vec<MonitorInfo> {
     }]
 }
 
-fn source(m: Vec<MonitorInfo>) -> glidedesk_core::MonitorSource {
+fn source(m: Vec<MonitorInfo>) -> nexpingdesk_core::MonitorSource {
     Arc::new(move || Ok::<_, InputError>(m.clone()))
 }
 
@@ -73,7 +73,7 @@ async fn wait_injected(inj: &MockInjector, what: &str, pred: impl Fn(&[Input]) -
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn full_session() {
-    let _ = tracing_subscriber::fmt().with_env_filter("glidedesk=debug").with_test_writer().try_init();
+    let _ = tracing_subscriber::fmt().with_env_filter("nexpingdesk=debug").with_test_writer().try_init();
 
     // --- server
     let (capture, cap_tx, cap_ctl) = mock::capture();
@@ -106,7 +106,7 @@ async fn full_session() {
         ClientDeps {
             injector: Box::new(injector.clone()),
             monitors: source(monitor(2000, 1000)),
-            status: Arc::new(glidedesk_proto::ClientStatus::default),
+            status: Arc::new(nexpingdesk_proto::ClientStatus::default),
             app_version: "test".into(),
             host_name: "client-host".into(),
             preferred_server: None,
@@ -152,7 +152,7 @@ async fn full_session() {
     wait_for(&mut srv_status, "unlocked", |v| !v.locked).await;
 
     // Client leaves politely → offline immediately.
-    cli.commands.send(glidedesk_core::ClientCommand::Shutdown(GoodbyeReason::Quitting)).await.unwrap();
+    cli.commands.send(nexpingdesk_core::ClientCommand::Shutdown(GoodbyeReason::Quitting)).await.unwrap();
     wait_for(&mut srv_status, "client offline", |v| {
         v.clients.iter().any(|c| c.id == CLIENT_ID && c.state == HealthState::Offline)
     })
@@ -188,19 +188,19 @@ async fn silent_client_goes_offline_by_heartbeat() {
     let addr: std::net::SocketAddr = wait_for(&mut st, "running", |v| v.running).await.bind[0].addr.parse().unwrap();
 
     // A raw peer that says hello and then never answers pings.
-    let ep = glidedesk_net::client_endpoint(None, glidedesk_net::Tuning::default()).unwrap();
-    let conn = glidedesk_net::connect(&ep, addr).await.unwrap();
+    let ep = nexpingdesk_net::client_endpoint(None, nexpingdesk_net::Tuning::default()).unwrap();
+    let conn = nexpingdesk_net::connect(&ep, addr).await.unwrap();
     let (send, recv) = conn.open_bi().await.unwrap();
-    let mut w = glidedesk_net::FrameWriter::new(send, glidedesk_proto::MAX_CONTROL_FRAME);
-    w.send(&glidedesk_proto::Control::Hello(glidedesk_proto::Hello {
-        protocol: glidedesk_proto::PROTOCOL_VERSION,
+    let mut w = nexpingdesk_net::FrameWriter::new(send, nexpingdesk_proto::MAX_CONTROL_FRAME);
+    w.send(&nexpingdesk_proto::Control::Hello(nexpingdesk_proto::Hello {
+        protocol: nexpingdesk_proto::PROTOCOL_VERSION,
         app_version: "x".into(),
         device_id: CLIENT_ID,
         name: "mute".into(),
-        platform: glidedesk_proto::Platform::Windows,
+        platform: nexpingdesk_proto::Platform::Windows,
         monitors: monitor(640, 480),
-        features: glidedesk_proto::Features::default(),
-        prefs: glidedesk_proto::ClientPrefs::default(),
+        features: nexpingdesk_proto::Features::default(),
+        prefs: nexpingdesk_proto::ClientPrefs::default(),
     }))
     .await
     .unwrap();
@@ -215,8 +215,8 @@ async fn silent_client_goes_offline_by_heartbeat() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn clipboard_and_files_follow_the_cursor() {
-    use glidedesk_clipboard::ClipData;
-    use glidedesk_clipboard::mock::MockClipboard;
+    use nexpingdesk_clipboard::ClipData;
+    use nexpingdesk_clipboard::mock::MockClipboard;
 
     let server_clip = MockClipboard::default();
     let client_clip = MockClipboard::default();
@@ -246,7 +246,7 @@ async fn clipboard_and_files_follow_the_cursor() {
         ClientDeps {
             injector: Box::new(client_inj.clone()),
             monitors: source(monitor(800, 600)),
-            status: Arc::new(glidedesk_proto::ClientStatus::default),
+            status: Arc::new(nexpingdesk_proto::ClientStatus::default),
             app_version: "test".into(),
             host_name: "c".into(),
             preferred_server: None,
@@ -281,10 +281,10 @@ async fn clipboard_and_files_follow_the_cursor() {
     assert_eq!(server_clip.contents().html.as_deref(), Some("<b>x</b>"));
 
     // 3. No echo: entering again must not send the client its own clipboard back.
-    let seq_before = glidedesk_clipboard::Clipboard::sequence(&client_clip);
+    let seq_before = nexpingdesk_clipboard::Clipboard::sequence(&client_clip);
     cap_tx.send(CaptureEvent::Motion { pos: Point::new(999, 100), dx: 5, dy: 0 }).await.unwrap();
     tokio::time::sleep(Duration::from_millis(400)).await;
-    assert_eq!(glidedesk_clipboard::Clipboard::sequence(&client_clip), seq_before, "clipboard echoed back");
+    assert_eq!(nexpingdesk_clipboard::Clipboard::sequence(&client_clip), seq_before, "clipboard echoed back");
     cap_tx.send(CaptureEvent::Motion { pos: Point::new(999, 100), dx: -10, dy: 0 }).await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
 
@@ -362,17 +362,17 @@ async fn clipboard_and_files_follow_the_cursor() {
     .await
     .expect("paste replayed on server");
 
-    cli.commands.send(glidedesk_core::ClientCommand::Shutdown(GoodbyeReason::Quitting)).await.unwrap();
+    cli.commands.send(nexpingdesk_core::ClientCommand::Shutdown(GoodbyeReason::Quitting)).await.unwrap();
     srv.commands.send(ServerCommand::Shutdown(GoodbyeReason::Stopping)).await.unwrap();
 }
 
-fn start_client(cfg: Config, injector: &MockInjector) -> glidedesk_core::ClientHandle {
+fn start_client(cfg: Config, injector: &MockInjector) -> nexpingdesk_core::ClientHandle {
     client::start(
         cfg,
         ClientDeps {
             injector: Box::new(injector.clone()),
             monitors: source(monitor(800, 600)),
-            status: Arc::new(glidedesk_proto::ClientStatus::default),
+            status: Arc::new(nexpingdesk_proto::ClientStatus::default),
             app_version: "test".into(),
             host_name: "client-host".into(),
             preferred_server: None,
@@ -386,9 +386,9 @@ fn start_client(cfg: Config, injector: &MockInjector) -> glidedesk_core::ClientH
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn password_protects_the_server() {
     let mut scfg = server_config();
-    let v = glidedesk_net::auth::Verifier::new("hunter22").unwrap();
+    let v = nexpingdesk_net::auth::Verifier::new("hunter22").unwrap();
     let (salt, key) = v.to_hex();
-    scfg.server.network.password = Some(glidedesk_config::StoredPassword { salt, key });
+    scfg.server.network.password = Some(nexpingdesk_config::StoredPassword { salt, key });
     let (capture, _cap_tx, _cap_ctl) = mock::capture();
     let deps = ServerDeps {
         capture,
@@ -420,7 +420,7 @@ async fn password_protects_the_server() {
     // Wrong password → refused; the right one (new settings) → connected.
     let mut wrong = ccfg.clone();
     wrong.client.password = "nope-nope".into();
-    none.commands.send(glidedesk_core::ClientCommand::ApplyConfig(Box::new(wrong))).await.unwrap();
+    none.commands.send(nexpingdesk_core::ClientCommand::ApplyConfig(Box::new(wrong))).await.unwrap();
     let v = wait_for(&mut st, "wrong password", |v| v.message.as_deref().is_some_and(|m| m.contains("wrong password")))
         .await;
     assert_eq!(v.state, LinkState::Rejected);
@@ -428,10 +428,10 @@ async fn password_protects_the_server() {
 
     let mut right = ccfg.clone();
     right.client.password = "hunter22".into();
-    none.commands.send(glidedesk_core::ClientCommand::ApplyConfig(Box::new(right.clone()))).await.unwrap();
+    none.commands.send(nexpingdesk_core::ClientCommand::ApplyConfig(Box::new(right.clone()))).await.unwrap();
     wait_for(&mut st, "connected with password", |v| v.state == LinkState::Connected).await;
     wait_for(&mut srv_status, "listed", |v| v.clients.iter().any(|c| c.id == CLIENT_ID)).await;
-    none.commands.send(glidedesk_core::ClientCommand::Shutdown(GoodbyeReason::Quitting)).await.unwrap();
+    none.commands.send(nexpingdesk_core::ClientCommand::Shutdown(GoodbyeReason::Quitting)).await.unwrap();
     srv.commands.send(ServerCommand::Shutdown(GoodbyeReason::Stopping)).await.unwrap();
     tokio::time::timeout(Duration::from_secs(5), srv.task).await.unwrap().unwrap();
 
@@ -465,8 +465,8 @@ async fn password_protects_the_server() {
 /// started are not offered.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn forget_sticks_until_reconnect_and_old_files_are_not_offered() {
-    use glidedesk_clipboard::ClipData;
-    use glidedesk_clipboard::mock::MockClipboard;
+    use nexpingdesk_clipboard::ClipData;
+    use nexpingdesk_clipboard::mock::MockClipboard;
 
     let old = tempfile::tempdir().unwrap();
     let file = old.path().join("old.txt");
@@ -502,7 +502,7 @@ async fn forget_sticks_until_reconnect_and_old_files_are_not_offered() {
         ClientDeps {
             injector: Box::new(MockInjector::default()),
             monitors: source(monitor(800, 600)),
-            status: Arc::new(glidedesk_proto::ClientStatus::default),
+            status: Arc::new(nexpingdesk_proto::ClientStatus::default),
             app_version: "test".into(),
             host_name: "c".into(),
             preferred_server: None,
@@ -514,7 +514,7 @@ async fn forget_sticks_until_reconnect_and_old_files_are_not_offered() {
     // Old files: entering the client offers nothing and leaves its clipboard alone.
     cap_tx.send(CaptureEvent::Motion { pos: Point::new(999, 100), dx: 5, dy: 0 }).await.unwrap();
     let v = wait_for(&mut st, "not-offered note", |v| v.activity.iter().any(|a| a.text.contains("not offered"))).await;
-    assert!(v.activity[0].text.contains("already on the clipboard when Glidedesk started"), "{:?}", v.activity);
+    assert!(v.activity[0].text.contains("already on the clipboard when Nexpingdesk started"), "{:?}", v.activity);
     assert_eq!(client_clip.contents().text.as_deref(), Some("mine"));
     cap_tx.send(CaptureEvent::Motion { pos: Point::new(999, 100), dx: -10, dy: 0 }).await.unwrap();
 
@@ -530,15 +530,15 @@ async fn forget_sticks_until_reconnect_and_old_files_are_not_offered() {
     assert!(st.borrow().clients.iter().all(|c| c.id != CLIENT_ID), "a forgotten client came back by itself");
 
     // The client's user presses Reconnect: it joins again.
-    cli.commands.send(glidedesk_core::ClientCommand::Reconnect).await.unwrap();
+    cli.commands.send(nexpingdesk_core::ClientCommand::Reconnect).await.unwrap();
     wait_for(&mut cs, "rejoined", |v| v.state == LinkState::Connected).await;
     wait_for(&mut st, "listed again", |v| v.clients.iter().any(|c| c.id == CLIENT_ID)).await;
 
-    cli.commands.send(glidedesk_core::ClientCommand::Shutdown(GoodbyeReason::Quitting)).await.unwrap();
+    cli.commands.send(nexpingdesk_core::ClientCommand::Shutdown(GoodbyeReason::Quitting)).await.unwrap();
     srv.commands.send(ServerCommand::Shutdown(GoodbyeReason::Stopping)).await.unwrap();
 }
 
-fn clip_client(addr: &str, clip: &glidedesk_clipboard::mock::MockClipboard) -> glidedesk_core::ClientHandle {
+fn clip_client(addr: &str, clip: &nexpingdesk_clipboard::mock::MockClipboard) -> nexpingdesk_core::ClientHandle {
     let mut ccfg = Config::default();
     ccfg.device.id = CLIENT_ID;
     ccfg.device.role = Role::Client;
@@ -548,7 +548,7 @@ fn clip_client(addr: &str, clip: &glidedesk_clipboard::mock::MockClipboard) -> g
         ClientDeps {
             injector: Box::new(MockInjector::default()),
             monitors: source(monitor(800, 600)),
-            status: Arc::new(glidedesk_proto::ClientStatus::default),
+            status: Arc::new(nexpingdesk_proto::ClientStatus::default),
             app_version: "test".into(),
             host_name: "c".into(),
             preferred_server: None,
@@ -559,7 +559,7 @@ fn clip_client(addr: &str, clip: &glidedesk_clipboard::mock::MockClipboard) -> g
 
 fn clip_server(
     cfg: Config,
-    clip: &glidedesk_clipboard::mock::MockClipboard,
+    clip: &nexpingdesk_clipboard::mock::MockClipboard,
 ) -> (server::ServerHandle, tokio::sync::mpsc::Sender<CaptureEvent>, Arc<mock::MockControl>) {
     let (capture, cap_tx, cap_ctl) = mock::capture();
     let srv = server::start(
@@ -579,9 +579,9 @@ fn clip_server(
 }
 
 async fn wait_clip(
-    clip: &glidedesk_clipboard::mock::MockClipboard,
+    clip: &nexpingdesk_clipboard::mock::MockClipboard,
     what: &str,
-    pred: impl Fn(&glidedesk_clipboard::ClipData) -> bool,
+    pred: impl Fn(&nexpingdesk_clipboard::ClipData) -> bool,
 ) {
     tokio::time::timeout(Duration::from_secs(10), async {
         while !pred(&clip.contents()) {
@@ -598,8 +598,8 @@ async fn wait_clip(
 /// longer holds the server's paste shortcut.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_restarted_client_works_without_restarting_the_server() {
-    use glidedesk_clipboard::ClipData;
-    use glidedesk_clipboard::mock::MockClipboard;
+    use nexpingdesk_clipboard::ClipData;
+    use nexpingdesk_clipboard::mock::MockClipboard;
 
     let server_clip = MockClipboard::default();
     let (srv, cap_tx, cap_ctl) = clip_server(server_config(), &server_clip);
@@ -619,7 +619,7 @@ async fn a_restarted_client_works_without_restarting_the_server() {
     wait_clip(&server_clip, "client text on server", |c| c.text.as_deref() == Some("copied on the client")).await;
 
     // The client restarts: a new process with an empty clipboard.
-    cli.commands.send(glidedesk_core::ClientCommand::Shutdown(GoodbyeReason::Restarting)).await.unwrap();
+    cli.commands.send(nexpingdesk_core::ClientCommand::Shutdown(GoodbyeReason::Restarting)).await.unwrap();
     wait_for(&mut st, "offline", |v| v.clients.iter().all(|c| c.state == HealthState::Offline)).await;
     let clip2 = MockClipboard::default();
     let cli = clip_client(&addr, &clip2);
@@ -638,7 +638,7 @@ async fn a_restarted_client_works_without_restarting_the_server() {
     cap_tx.send(back()).await.unwrap();
     wait_for(&mut st, "offer on server", |v| v.offer.is_some()).await;
     assert!(cap_ctl.calls.lock().unwrap().contains(&ControlCall::PasteHold(true)));
-    cli.commands.send(glidedesk_core::ClientCommand::Shutdown(GoodbyeReason::Restarting)).await.unwrap();
+    cli.commands.send(nexpingdesk_core::ClientCommand::Shutdown(GoodbyeReason::Restarting)).await.unwrap();
 
     // The offer died with that link: the paste shortcut is released, the offer is gone.
     let v = wait_for(&mut st, "offer withdrawn", |v| v.offer.is_none()).await;
@@ -661,9 +661,9 @@ async fn a_restarted_client_works_without_restarting_the_server() {
     cap_tx.send(enter()).await.unwrap();
     wait_for(&mut st, "cursor on the client", |v| v.focus == Some(CLIENT_ID)).await;
     tokio::time::sleep(Duration::from_millis(500)).await;
-    assert_eq!(glidedesk_clipboard::Clipboard::sequence(&clip3), 0, "placeholder sent: {:?}", clip3.contents());
+    assert_eq!(nexpingdesk_clipboard::Clipboard::sequence(&clip3), 0, "placeholder sent: {:?}", clip3.contents());
     cap_tx.send(back()).await.unwrap();
-    cli.commands.send(glidedesk_core::ClientCommand::Shutdown(GoodbyeReason::Quitting)).await.unwrap();
+    cli.commands.send(nexpingdesk_core::ClientCommand::Shutdown(GoodbyeReason::Quitting)).await.unwrap();
     srv.commands.send(ServerCommand::Shutdown(GoodbyeReason::Stopping)).await.unwrap();
 }
 
@@ -671,8 +671,8 @@ async fn a_restarted_client_works_without_restarting_the_server() {
 /// again, even when that clipboard came from the server before.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_restarted_server_gets_the_client_clipboard_again() {
-    use glidedesk_clipboard::ClipData;
-    use glidedesk_clipboard::mock::MockClipboard;
+    use nexpingdesk_clipboard::ClipData;
+    use nexpingdesk_clipboard::mock::MockClipboard;
 
     // A fixed port, so the restarted server is found at the same address.
     let port = std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
@@ -708,6 +708,6 @@ async fn a_restarted_server_gets_the_client_clipboard_again() {
     })
     .await;
 
-    cli.commands.send(glidedesk_core::ClientCommand::Shutdown(GoodbyeReason::Quitting)).await.unwrap();
+    cli.commands.send(nexpingdesk_core::ClientCommand::Shutdown(GoodbyeReason::Quitting)).await.unwrap();
     srv.commands.send(ServerCommand::Shutdown(GoodbyeReason::Stopping)).await.unwrap();
 }

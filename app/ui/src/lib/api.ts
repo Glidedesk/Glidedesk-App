@@ -9,7 +9,7 @@ type Req = Record<string, unknown> & { cmd: string };
 const inTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export async function agent<T = unknown>(req: Req): Promise<T> {
-  if (!inTauri()) throw new Error("Glidedesk UI must run inside the app");
+  if (!inTauri()) throw new Error("Nexpingdesk UI must run inside the app");
   return invoke<T>("agent", { request: req });
 }
 
@@ -32,7 +32,7 @@ export const api = {
   wake: (id: DeviceId) => agent({ cmd: "wake", id }),
   interfaces: () => agent<NetInterface[]>({ cmd: "list_interfaces" }),
   resetConfig: () => agent({ cmd: "reset_config" }),
-  /** Asks macOS from the app itself, so the prompt names Glidedesk. */
+  /** Asks macOS from the app itself, so the prompt names Nexpingdesk. */
   requestPermissions: () => invoke<void>("request_permissions"),
   fetchOffer: () => agent({ cmd: "fetch_offer" }),
   setServerPassword: (password: string) => agent({ cmd: "set_server_password", password }),

@@ -7,12 +7,12 @@ type Cb = (payload: unknown) => void;
 
 export async function installDevShim(): Promise<void> {
   const params = new URLSearchParams(window.location.search);
-  const names = (await fetch("/__gd/agents").then((r) => r.json(), () => [])) as string[];
+  const names = (await fetch("/__nd/agents").then((r) => r.json(), () => [])) as string[];
   // Only an agent the bridge listed: the URL parameter never picks another path.
   const wanted = params.get("agent");
   const agent = wanted === null ? names[0] : names.find((n) => n === wanted);
   if (!agent) return;
-  const base = `/__gd/${encodeURIComponent(agent)}`;
+  const base = `/__nd/${encodeURIComponent(agent)}`;
   const callbacks = new Map<number, Cb>();
   const listeners = new Map<string, Set<number>>();
   let nextId = 1;

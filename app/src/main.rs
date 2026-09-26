@@ -1,19 +1,20 @@
-//! Glidedesk tray + settings app. Thin: all work happens in
-//! `glidedesk-agent`; this process shows the tray, the settings window
+//! Nexpingdesk tray + settings app. Thin: all work happens in
+//! `nexpingdesk-agent`; this process shows the tray, the settings window
 //! (created on demand) and notifications.
 
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod autostart;
 mod commands;
+mod legacy;
 mod link;
 mod tray;
 mod windows;
 
 use std::sync::Arc;
 
-use glidedesk_config::Role;
-use glidedesk_ipc::Request;
+use nexpingdesk_config::Role;
+use nexpingdesk_ipc::Request;
 use tauri::{AppHandle, Manager, RunEvent};
 
 use crate::link::Link;
@@ -31,7 +32,7 @@ pub fn notifications_enabled(app: &AppHandle) -> bool {
 /// Flips the clipboard or files switch in the right place for this role.
 pub async fn toggle_sharing(_app: &AppHandle, link: &Link, clipboard: bool) -> Result<serde_json::Value, String> {
     let cfg = link.request(Request::GetConfig).await?;
-    let mut cfg: glidedesk_config::Config = serde_json::from_value(cfg).map_err(|e| e.to_string())?;
+    let mut cfg: nexpingdesk_config::Config = serde_json::from_value(cfg).map_err(|e| e.to_string())?;
     match (cfg.device.role, clipboard) {
         (Role::Client, true) => cfg.client.accept_clipboard = !cfg.client.accept_clipboard,
         (Role::Client, false) => cfg.client.accept_files = !cfg.client.accept_files,
@@ -54,30 +55,36 @@ pub async fn sync_autostart(app: &AppHandle, link: &Link) {
 }
 
 /// Name of the marker file that makes a copy portable (the Windows portable zip ships it).
-pub const PORTABLE_MARKER: &str = "glidedesk.portable";
+pub const PORTABLE_MARKER: &str = "nexpingdesk.portable";
 
-/// Portable copy: a `glidedesk.portable` file next to the executable keeps all
-/// settings, logs and received files in `Glidedesk Data` beside it (nothing in
+/// Portable copy: a `nexpingdesk.portable` file next to the executable keeps all
+/// settings, logs and received files in `Nexpingdesk Data` beside it (nothing in
 /// the user profile). Must run before any other thread starts.
 fn enable_portable_mode() {
-    if std::env::var_os("GLIDEDESK_HOME").is_some() {
+    if std::env::var_os("NEXPINGDESK_HOME").is_some() {
         return;
     }
     let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(std::path::Path::to_path_buf)) else {
         return;
     };
     if dir.join(PORTABLE_MARKER).is_file() {
+        let data = dir.join("Nexpingdesk Data");
+        // Extracted over a copy of the app's former name: take its data over.
+        let _ = nexpingdesk_config::take_over_legacy(
+            &dir.join(format!("{} Data", nexpingdesk_config::LEGACY_APP_DIR_NAME)),
+            &data,
+        );
         // SAFETY: called first thing in `main`, before any thread exists; the
         // agent child inherits the variable from here.
         unsafe {
-            std::env::set_var("GLIDEDESK_HOME", dir.join("Glidedesk Data"));
-            std::env::set_var("GLIDEDESK_PORTABLE", "1");
+            std::env::set_var("NEXPINGDESK_HOME", data);
+            std::env::set_var("NEXPINGDESK_PORTABLE", "1");
         }
     }
 }
 
 pub fn is_portable() -> bool {
-    std::env::var_os("GLIDEDESK_PORTABLE").is_some()
+    std::env::var_os("NEXPINGDESK_PORTABLE").is_some()
 }
 
 fn main() {
@@ -87,22 +94,24 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let has = |f: &str| args.iter().any(|a| a == f);
     if has("--agent") {
-        std::process::exit(i32::from(glidedesk_agent::run_agent() != std::process::ExitCode::SUCCESS));
+        std::process::exit(i32::from(nexpingdesk_agent::run_agent() != std::process::ExitCode::SUCCESS));
     }
     if has("--selftest") {
-        let _ = glidedesk_agent::run_selftest();
+        let _ = nexpingdesk_agent::run_selftest();
         return;
     }
     if has("--shutdown") {
-        let _ = glidedesk_agent::shutdown_running_agent();
+        let _ = nexpingdesk_agent::shutdown_running_agent();
         return;
     }
     if has("--version") {
-        println!("Glidedesk {}", glidedesk_agent::VERSION);
+        println!("Nexpingdesk {}", nexpingdesk_agent::VERSION);
         return;
     }
-    let _ =
-        tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::new("warn,glidedesk=info")).try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::new("warn,nexpingdesk=info"))
+        .try_init();
+    legacy::retire_old_install();
     let link = Arc::new(Link::default());
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -142,7 +151,7 @@ fn main() {
     let app = match app {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("Glidedesk could not start: {e}");
+            eprintln!("Nexpingdesk could not start: {e}");
             std::process::exit(1);
         }
     };

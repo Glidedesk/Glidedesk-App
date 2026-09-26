@@ -3,8 +3,8 @@
 
 use std::collections::BTreeSet;
 
-use glidedesk_layout::Mods;
-use glidedesk_proto::{KeyCode, MouseButton};
+use nexpingdesk_layout::Mods;
+use nexpingdesk_proto::{KeyCode, MouseButton};
 
 use crate::keymap::hid;
 

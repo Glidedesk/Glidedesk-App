@@ -20,7 +20,7 @@ use evdev::uinput::VirtualDevice;
 use evdev::{
     AbsInfo, AbsoluteAxisCode, AttributeSet, EventType, InputEvent, KeyCode as EvKey, RelativeAxisCode, UinputAbsSetup,
 };
-use glidedesk_proto::{Input, KeyCode, LedState, MonitorId, MonitorInfo, MouseButton, Point, Rect};
+use nexpingdesk_proto::{Input, KeyCode, LedState, MonitorId, MonitorInfo, MouseButton, Point, Rect};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use x11rb::connection::Connection as _;
@@ -314,7 +314,7 @@ pub fn start_capture() -> Result<Capture, InputError> {
     });
     let s = shared.clone();
     std::thread::Builder::new()
-        .name("gd-capture".into())
+        .name("nd-capture".into())
         .spawn(move || capture_loop(&s))
         .map_err(|e| InputError::Os(e.to_string()))?;
     Ok(Capture { control: Arc::new(Control(shared)), events: rx })
@@ -441,7 +441,7 @@ fn uinput_backend() -> std::io::Result<Backend> {
             keys.insert(EvKey::new(code));
         }
     }
-    let keyboard = VirtualDevice::builder()?.name("Glidedesk keyboard").with_keys(&keys)?.build()?;
+    let keyboard = VirtualDevice::builder()?.name("Nexpingdesk keyboard").with_keys(&keys)?.build()?;
     // Absolute pointer like a VM "tablet": compositors map it over all monitors.
     let mut buttons = AttributeSet::<EvKey>::new();
     for (_, k, _) in BUTTONS {
@@ -449,7 +449,7 @@ fn uinput_backend() -> std::io::Result<Backend> {
     }
     let info = AbsInfo::new(0, 0, ABS_MAX, 0, 0, 1);
     let tablet = VirtualDevice::builder()?
-        .name("Glidedesk pointer")
+        .name("Nexpingdesk pointer")
         .with_keys(&buttons)?
         .with_absolute_axis(&UinputAbsSetup::new(AbsoluteAxisCode::ABS_X, info))?
         .with_absolute_axis(&UinputAbsSetup::new(AbsoluteAxisCode::ABS_Y, info))?
@@ -466,7 +466,7 @@ fn uinput_backend() -> std::io::Result<Backend> {
         rel.insert(a);
     }
     let mouse =
-        VirtualDevice::builder()?.name("Glidedesk mouse").with_keys(&buttons)?.with_relative_axes(&rel)?.build()?;
+        VirtualDevice::builder()?.name("Nexpingdesk mouse").with_keys(&buttons)?.with_relative_axes(&rel)?.build()?;
     Ok(Backend::Uinput { keyboard: Box::new(keyboard), tablet: Box::new(tablet), mouse: Box::new(mouse) })
 }
 
@@ -477,7 +477,7 @@ pub fn injector() -> Result<Box<dyn Injector>, InputError> {
             debug!(error = %e, "uinput unavailable; trying XTest");
             if is_wayland() {
                 return Err(InputError::Permission(
-                    "access to /dev/uinput (install the Glidedesk package, or add the udev rule from the .tar.gz)",
+                    "access to /dev/uinput (install the Nexpingdesk package, or add the udev rule from the .tar.gz)",
                 ));
             }
             let (conn, screen) = x11()?;

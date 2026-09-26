@@ -50,7 +50,7 @@ pub struct BindStatus {
 
 fn udp_socket(addr: SocketAddr) -> std::io::Result<UdpSocket> {
     if !addr.is_ipv4() {
-        return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "Glidedesk uses IPv4 only"));
+        return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "Nexpingdesk uses IPv4 only"));
     }
     let s = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     s.bind(&addr.into())?;
@@ -209,8 +209,8 @@ pub fn client_endpoint(bind_ip: Option<IpAddr>, tuning: Tuning) -> Result<Endpoi
 /// Connects to a server (IPv4 only).
 pub async fn connect(ep: &Endpoint, addr: SocketAddr) -> Result<Connection, NetError> {
     if !addr.is_ipv4() {
-        return Err(NetError::Connect(format!("{addr} is IPv6; Glidedesk uses IPv4 only")));
+        return Err(NetError::Connect(format!("{addr} is IPv6; Nexpingdesk uses IPv4 only")));
     }
-    let connecting = ep.connect(addr, "glidedesk").map_err(|e| NetError::Connect(e.to_string()))?;
+    let connecting = ep.connect(addr, "nexpingdesk").map_err(|e| NetError::Connect(e.to_string()))?;
     connecting.await.map_err(|e| NetError::Connect(e.to_string()))
 }

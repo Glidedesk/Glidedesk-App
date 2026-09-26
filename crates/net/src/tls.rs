@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use glidedesk_proto::ALPN;
+use nexpingdesk_proto::ALPN;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{CryptoProvider, WebPkiSupportedAlgorithms};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
@@ -20,7 +20,7 @@ fn provider() -> Arc<CryptoProvider> {
 /// Server TLS config with a newly generated certificate.
 pub fn server_config() -> Result<(rustls::ServerConfig, [u8; 32]), NetError> {
     let ck =
-        rcgen::generate_simple_self_signed(vec!["glidedesk".to_owned()]).map_err(|e| NetError::Tls(e.to_string()))?;
+        rcgen::generate_simple_self_signed(vec!["nexpingdesk".to_owned()]).map_err(|e| NetError::Tls(e.to_string()))?;
     let cert = ck.cert.der().clone();
     let fingerprint = fingerprint(&cert);
     let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(ck.signing_key.serialize_der()));

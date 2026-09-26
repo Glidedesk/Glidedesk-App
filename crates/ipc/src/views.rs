@@ -1,7 +1,7 @@
 //! Status snapshots the agent publishes to the tray / settings UI.
 
-use glidedesk_config::Role;
-use glidedesk_proto::{ClientStatus, DeviceId, MonitorInfo, Platform};
+use nexpingdesk_config::Role;
+use nexpingdesk_proto::{ClientStatus, DeviceId, MonitorInfo, Platform};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

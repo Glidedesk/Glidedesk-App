@@ -3,9 +3,9 @@
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
-use glidedesk_config::Role;
-use glidedesk_ipc::{AgentStatus, HealthState, LinkState, Request};
-use glidedesk_proto::DeviceId;
+use nexpingdesk_config::Role;
+use nexpingdesk_ipc::{AgentStatus, HealthState, LinkState, Request};
+use nexpingdesk_proto::DeviceId;
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
@@ -13,7 +13,7 @@ use tauri::{AppHandle, Manager, Wry};
 
 use crate::link::Link;
 
-const TRAY_ID: &str = "glidedesk";
+const TRAY_ID: &str = "nexpingdesk";
 
 /// What the tray shows now. The native menu is rebuilt only when its
 /// *structure* changes; text and check marks are updated in place, so an open
@@ -65,9 +65,9 @@ fn icon(stopped: bool) -> Option<Image<'static>> {
 }
 
 pub fn create(app: &AppHandle) -> tauri::Result<TrayIcon> {
-    let menu = Menu::with_items(app, &[&MenuItem::with_id(app, "open", "Open Glidedesk…", true, None::<&str>)?])?;
+    let menu = Menu::with_items(app, &[&MenuItem::with_id(app, "open", "Open Nexpingdesk…", true, None::<&str>)?])?;
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
-        .tooltip("Glidedesk")
+        .tooltip("Nexpingdesk")
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| on_menu(app, event.id().as_ref()))
@@ -139,8 +139,8 @@ fn model(s: &AgentStatus, clipboard: bool, files: bool) -> Model {
     let mut clients = Vec::new();
     let mut wakeable = Vec::new();
     let header = match (s.role, &s.server, &s.client) {
-        (_, _, _) if s.version.is_empty() => "Glidedesk — starting…".to_owned(),
-        (Role::Unset, ..) => "Glidedesk — set up needed".to_owned(),
+        (_, _, _) if s.version.is_empty() => "Nexpingdesk — starting…".to_owned(),
+        (Role::Unset, ..) => "Nexpingdesk — set up needed".to_owned(),
         (Role::Server, Some(v), _) => {
             for c in &v.clients {
                 #[allow(clippy::cast_possible_truncation)]
@@ -156,24 +156,24 @@ fn model(s: &AgentStatus, clipboard: bool, files: bool) -> Model {
                 }
             }
             let online = v.clients.iter().filter(|c| c.state.reachable()).count();
-            format!("Glidedesk — Server · Sharing ({online} of {} online)", v.clients.len())
+            format!("Nexpingdesk — Server · Sharing ({online} of {} online)", v.clients.len())
         }
         (Role::Client, _, Some(c)) => match c.state {
-            LinkState::Connected => format!("Glidedesk — Connected to {}", c.server_name.clone().unwrap_or_default()),
-            LinkState::Searching => "Glidedesk — Searching for the server…".into(),
-            LinkState::Connecting => "Glidedesk — Connecting…".into(),
-            LinkState::Rejected => "Glidedesk — Refused by the server".into(),
-            LinkState::Offline => "Glidedesk — Server offline".into(),
-            LinkState::Stopped => "Glidedesk — Stopped".into(),
+            LinkState::Connected => format!("Nexpingdesk — Connected to {}", c.server_name.clone().unwrap_or_default()),
+            LinkState::Searching => "Nexpingdesk — Searching for the server…".into(),
+            LinkState::Connecting => "Nexpingdesk — Connecting…".into(),
+            LinkState::Rejected => "Nexpingdesk — Refused by the server".into(),
+            LinkState::Offline => "Nexpingdesk — Server offline".into(),
+            LinkState::Stopped => "Nexpingdesk — Stopped".into(),
         },
         _ if !s.running => {
             if s.error.is_some() {
-                "Glidedesk — Not sharing (see Settings)".into()
+                "Nexpingdesk — Not sharing (see Settings)".into()
             } else {
-                "Glidedesk — Stopped".into()
+                "Nexpingdesk — Stopped".into()
             }
         }
-        _ => "Glidedesk".into(),
+        _ => "Nexpingdesk".into(),
     };
     Model {
         header,
@@ -274,7 +274,7 @@ fn build(app: &AppHandle, m: &Model) -> tauri::Result<(Menu<Wry>, Built)> {
         let reconnect = MenuItem::with_id(app, "reconnect", "⟳ Reconnect all", m.running, None::<&str>)?;
         let identify = MenuItem::with_id(app, "identify", "Identify screens", m.running, None::<&str>)?;
         items.push(Box::new(toggle.clone()));
-        items.push(Box::new(MenuItem::with_id(app, "restart", "↻ Restart Glidedesk", true, None::<&str>)?));
+        items.push(Box::new(MenuItem::with_id(app, "restart", "↻ Restart Nexpingdesk", true, None::<&str>)?));
         items.push(Box::new(reconnect.clone()));
         items.push(Box::new(identify.clone()));
         built.toggle = Some(toggle);
@@ -282,10 +282,10 @@ fn build(app: &AppHandle, m: &Model) -> tauri::Result<(Menu<Wry>, Built)> {
         built.identify = Some(identify);
         items.push(Box::new(sep()?));
     }
-    items.push(Box::new(MenuItem::with_id(app, "open", "Open Glidedesk…", true, None::<&str>)?));
+    items.push(Box::new(MenuItem::with_id(app, "open", "Open Nexpingdesk…", true, None::<&str>)?));
     items.push(Box::new(MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?));
     items.push(Box::new(sep()?));
-    items.push(Box::new(MenuItem::with_id(app, "quit", "Quit Glidedesk", true, None::<&str>)?));
+    items.push(Box::new(MenuItem::with_id(app, "quit", "Quit Nexpingdesk", true, None::<&str>)?));
     let refs: Vec<&dyn IsMenuItem<Wry>> = items.iter().map(AsRef::as_ref).collect();
     Ok((Menu::with_items(app, &refs)?, built))
 }
@@ -403,7 +403,7 @@ fn on_menu(app: &AppHandle, id: &str) {
         };
         if let Err(e) = result {
             use tauri_plugin_notification::NotificationExt as _;
-            let _ = app.notification().builder().title("Glidedesk").body(e).show();
+            let _ = app.notification().builder().title("Nexpingdesk").body(e).show();
         }
     });
 }

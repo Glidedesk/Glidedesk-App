@@ -5,7 +5,7 @@
 
 use std::sync::OnceLock;
 
-use glidedesk_proto::KeyCode;
+use nexpingdesk_proto::KeyCode;
 
 /// Windows scancodes with the `0xE0` prefix are stored as `0xE000 | code`.
 pub const EXT: u16 = 0xE000;

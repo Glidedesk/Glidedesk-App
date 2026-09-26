@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::time::{Duration, Instant};
 
-use glidedesk_layout::*;
-use glidedesk_proto::{DeviceId, MonitorId, MonitorInfo, Point, Rect, Side};
+use nexpingdesk_layout::*;
+use nexpingdesk_proto::{DeviceId, MonitorId, MonitorInfo, Point, Rect, Side};
 use proptest::prelude::*;
 
 const SERVER: DeviceId = DeviceId([1; 16]);
@@ -278,7 +278,7 @@ proptest! {
             &[LinkSpec::simple(SERVER, Side::Right, CLIENT)],
         );
         let rects: Vec<Rect> = server.iter().map(|m| m.bounds).collect();
-        for seg in glidedesk_layout::edges::outer_segments(&rects, Side::Right) {
+        for seg in nexpingdesk_layout::edges::outer_segments(&rects, Side::Right) {
             #[allow(clippy::cast_possible_truncation)]
             let a = seg.start + ((f64::from(seg.len()) * sample) as i32).min(seg.len() - 1);
             let mut e = Engine::new(SERVER, layout.clone(), SwitchPolicy::default());

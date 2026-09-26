@@ -6,7 +6,7 @@
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::path::PathBuf;
 
-use glidedesk_proto::ClientStatus;
+use nexpingdesk_proto::ClientStatus;
 
 /// Friendly machine name ("Office-PC"), without a `.local` suffix.
 #[must_use]
@@ -19,17 +19,17 @@ pub fn host_name() -> String {
 /// Per-user log folder (created on demand by the logger).
 #[must_use]
 pub fn log_dir() -> PathBuf {
-    if let Some(home) = std::env::var_os("GLIDEDESK_HOME").filter(|h| !h.is_empty()) {
+    if let Some(home) = std::env::var_os("NEXPINGDESK_HOME").filter(|h| !h.is_empty()) {
         return PathBuf::from(home).join("logs");
     }
     let base = directories::BaseDirs::new();
     #[cfg(target_os = "macos")]
-    let dir = base.map(|b| b.home_dir().join("Library/Logs/Glidedesk"));
+    let dir = base.map(|b| b.home_dir().join("Library/Logs/Nexpingdesk"));
     #[cfg(windows)]
-    let dir = base.map(|b| b.data_local_dir().join("Glidedesk").join("logs"));
+    let dir = base.map(|b| b.data_local_dir().join("Nexpingdesk").join("logs"));
     #[cfg(not(any(target_os = "macos", windows)))]
-    let dir = base.map(|b| b.data_local_dir().join("glidedesk").join("logs"));
-    dir.unwrap_or_else(|| std::env::temp_dir().join("glidedesk-logs"))
+    let dir = base.map(|b| b.data_local_dir().join("nexpingdesk").join("logs"));
+    dir.unwrap_or_else(|| std::env::temp_dir().join("nexpingdesk-logs"))
 }
 
 /// Lock / sleep / remote-session state reported in every pong.
@@ -100,7 +100,7 @@ pub fn wake_on_lan(mac: [u8; 6]) -> std::io::Result<()> {
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
 mod macos {
-    use glidedesk_proto::ClientStatus;
+    use nexpingdesk_proto::ClientStatus;
     use objc2_core_foundation::{CFBoolean, CFString, CFType};
     use objc2_core_graphics::CGSessionCopyCurrentDictionary;
 
@@ -139,7 +139,7 @@ mod macos {
 #[cfg(windows)]
 #[allow(unsafe_code)]
 mod windows {
-    use glidedesk_proto::ClientStatus;
+    use nexpingdesk_proto::ClientStatus;
     use windows::Win32::System::RemoteDesktop::{
         WTS_CONNECTSTATE_CLASS, WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION, WTSActive, WTSConnectState,
         WTSFreeMemory, WTSQuerySessionInformationW,

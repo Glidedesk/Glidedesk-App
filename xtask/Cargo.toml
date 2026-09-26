@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-description = "Build, package and release automation (runs inside glidedesk-builder)"
+description = "Build, package and release automation (runs inside nexpingdesk-builder)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -30,7 +30,7 @@ function SelfTestView({ r }: { r: Report }) {
   const lat = r.loopback_quic_ms as { p50?: number; p95?: number } | null;
   return (
     <div className="divide-y divide-line">
-      <Check ok={!!perms.accessibility} label="Permission to use the keyboard and mouse" detail={perms.accessibility ? "Allowed" : "Allow Glidedesk under Accessibility"} />
+      <Check ok={!!perms.accessibility} label="Permission to use the keyboard and mouse" detail={perms.accessibility ? "Allowed" : "Allow Nexpingdesk under Accessibility"} />
       <Check ok={!!capture.ok} label="Read this computer's keyboard and mouse" detail={capture.error ?? capture.note} />
       <Check ok={!!inject.ok} label="Type and move the pointer here" detail={inject.error} />
       <Check ok={!!mons?.Ok} label="Screens" detail={mons?.Ok ? `${mons.Ok.length} found` : mons?.Err} />
@@ -122,12 +122,12 @@ export function AdvancedPage({ status, config, update, reload }: { status: Agent
           </Row>
         )}
         <Row label="Version">
-          <span className="text-muted">Glidedesk {status.version}</span>
+          <span className="text-muted">Nexpingdesk {status.version}</span>
         </Row>
       </Section>
       {status.platform === "macos" && (
         <Section title="macOS permissions">
-          <Row label="Accessibility" hint="Required: lets Glidedesk read and control this Mac's keyboard and mouse.">
+          <Row label="Accessibility" hint="Required: lets Nexpingdesk read and control this Mac's keyboard and mouse.">
             {status.permissions.accessibility ? (
               <Badge tone="ok">Allowed</Badge>
             ) : (
@@ -159,7 +159,7 @@ export function AdvancedPage({ status, config, update, reload }: { status: Agent
         </Section>
       )}
       <Section title="Uninstall">
-        <Row label="Uninstall Glidedesk" hint="Asks whether to keep your settings for a future install.">
+        <Row label="Uninstall Nexpingdesk" hint="Asks whether to keep your settings for a future install.">
           <Button variant="danger" onClick={() => void run(() => api.openExternal("uninstall"))}>
             Uninstall…
           </Button>

@@ -1,9 +1,9 @@
 // Dev-only: lets the settings UI run in a normal browser against real agents,
 // for browser QA (`make ui-lab`). Never part of a build (`apply: "serve"`) and
-// off unless GLIDEDESK_DEV_AGENTS names the agents' sockets:
-//   GLIDEDESK_DEV_AGENTS="server=/lab/server/agent.sock,client=/lab/client/agent.sock"
-// Routes: POST /__gd/<agent>/request (one IPC request) and
-//         GET  /__gd/<agent>/events  (Server-Sent Events of the agent's events).
+// off unless NEXPINGDESK_DEV_AGENTS names the agents' sockets:
+//   NEXPINGDESK_DEV_AGENTS="server=/lab/server/agent.sock,client=/lab/client/agent.sock"
+// Routes: POST /__nd/<agent>/request (one IPC request) and
+//         GET  /__nd/<agent>/events  (Server-Sent Events of the agent's events).
 import { createConnection } from "node:net";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
@@ -12,7 +12,7 @@ type Agents = Record<string, string>;
 
 function agents(): Agents {
   const out: Agents = {};
-  for (const part of (process.env.GLIDEDESK_DEV_AGENTS ?? "").split(",")) {
+  for (const part of (process.env.NEXPINGDESK_DEV_AGENTS ?? "").split(",")) {
     const [name, path] = part.split("=");
     if (name && path) out[name.trim()] = path.trim();
   }
@@ -84,17 +84,17 @@ function events(path: string, res: ServerResponse) {
 
 export function agentBridge(): Plugin {
   return {
-    name: "glidedesk-agent-bridge",
+    name: "nexpingdesk-agent-bridge",
     apply: "serve",
     configureServer(server) {
       const known = agents();
       if (Object.keys(known).length === 0) return;
-      server.middlewares.use("/__gd/agents", (_req, res) => {
+      server.middlewares.use("/__nd/agents", (_req, res) => {
         res.setHeader("content-type", "application/json");
         res.end(JSON.stringify(Object.keys(known)));
       });
       server.middlewares.use(async (req, res, next) => {
-        const m = /^\/__gd\/([\w-]+)\/(request|events)$/.exec(req.url ?? "");
+        const m = /^\/__nd\/([\w-]+)\/(request|events)$/.exec(req.url ?? "");
         const path = m && known[m[1]];
         if (!m || !path) return next();
         if (m[2] === "events") return events(path, res);

@@ -1,9 +1,9 @@
 #!/bin/sh
 # Copies the newest macOS SDK from this Mac's Command Line Tools that the
-# container's linker understands into ~/.cache/glidedesk/macos-sdk.
+# container's linker understands into ~/.cache/nexpingdesk/macos-sdk.
 # (Apple licence: the SDK is only used on this Apple machine; never committed.)
 set -eu
-dest="${GLIDEDESK_SDK:-$HOME/.cache/glidedesk/macos-sdk}"
+dest="${NEXPINGDESK_SDK:-$HOME/.cache/nexpingdesk/macos-sdk}"
 root=/Library/Developer/CommandLineTools/SDKs
 [ -d "$root" ] || { echo "Xcode Command Line Tools not found: run 'xcode-select --install'" >&2; exit 1; }
 chosen=""

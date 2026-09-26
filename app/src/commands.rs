@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use glidedesk_ipc::Request;
+use nexpingdesk_ipc::Request;
 use serde_json::Value;
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt as _;
@@ -38,9 +38,10 @@ pub async fn status(link: State<'_, Arc<Link>>) -> Result<Value, String> {
 pub async fn export_settings(app: AppHandle, link: State<'_, Arc<Link>>, layout_only: bool) -> Result<bool, String> {
     let text = link.request(Request::ExportConfig { layout_only }).await?;
     let text = text.as_str().ok_or("unexpected export result")?.to_owned();
-    let name = if layout_only { "glidedesk-layout.glidedesk.toml" } else { "glidedesk-settings.glidedesk.toml" };
+    let name =
+        if layout_only { "nexpingdesk-layout.nexpingdesk.toml" } else { "nexpingdesk-settings.nexpingdesk.toml" };
     let picked = tokio::task::spawn_blocking(move || {
-        app.dialog().file().add_filter("Glidedesk settings", &["toml"]).set_file_name(name).blocking_save_file()
+        app.dialog().file().add_filter("Nexpingdesk settings", &["toml"]).set_file_name(name).blocking_save_file()
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -53,25 +54,25 @@ pub async fn export_settings(app: AppHandle, link: State<'_, Arc<Link>>, layout_
 #[tauri::command]
 pub async fn import_settings(app: AppHandle, link: State<'_, Arc<Link>>) -> Result<Value, String> {
     let picked = tokio::task::spawn_blocking(move || {
-        app.dialog().file().add_filter("Glidedesk settings", &["toml"]).blocking_pick_file()
+        app.dialog().file().add_filter("Nexpingdesk settings", &["toml"]).blocking_pick_file()
     })
     .await
     .map_err(|e| e.to_string())?;
     let Some(path) = picked.and_then(|p| p.into_path().ok()) else { return Ok(Value::Null) };
     let len = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
     if len > MAX_IMPORT_BYTES {
-        return Err("that file is too large to be a Glidedesk settings file".into());
+        return Err("that file is too large to be a Nexpingdesk settings file".into());
     }
     let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     link.request(Request::ImportPreview { text }).await
 }
 
 /// macOS: asks for Accessibility from *this* process — the one macOS knows as
-/// Glidedesk — so the prompt and the Settings list show the app's name and icon.
+/// Nexpingdesk — so the prompt and the Settings list show the app's name and icon.
 /// The background agent is started by this app and shares its permission.
 #[tauri::command]
 pub fn request_permissions() {
-    glidedesk_input::request_permissions();
+    nexpingdesk_input::request_permissions();
 }
 
 /// Opens the relevant OS settings page (permissions, firewall) or the log folder.
@@ -107,7 +108,7 @@ pub fn open_external(target: String) -> Result<(), String> {
             Err("not supported".into())
         }
         "uninstall" if crate::is_portable() => Err(
-            "This is the portable version: quit Glidedesk and delete its folder (settings are in \"Glidedesk Data\" inside it)."
+            "This is the portable version: quit Nexpingdesk and delete its folder (settings are in \"Nexpingdesk Data\" inside it)."
                 .into(),
         ),
         "uninstall" => {
@@ -115,7 +116,7 @@ pub fn open_external(target: String) -> Result<(), String> {
             let dir = exe.parent().ok_or("no install folder")?;
             #[cfg(target_os = "macos")]
             {
-                // Glidedesk.app/Contents/MacOS/glidedesk → Contents/Resources/uninstall.sh
+                // Nexpingdesk.app/Contents/MacOS/nexpingdesk → Contents/Resources/uninstall.sh
                 let script = dir.join("../Resources/uninstall.sh");
                 return status(std::process::Command::new("/bin/sh").arg(script).spawn());
             }
@@ -129,8 +130,8 @@ pub fn open_external(target: String) -> Result<(), String> {
             {
                 let _ = dir;
                 return Err(
-                    "On Linux, remove Glidedesk with your package manager (e.g. `sudo apt remove glidedesk`). \
-                            Your settings in ~/.config/glidedesk are kept."
+                    "On Linux, remove Nexpingdesk with your package manager (e.g. `sudo apt remove nexpingdesk`). \
+                            Your settings in ~/.config/nexpingdesk are kept."
                         .into(),
                 );
             }
@@ -144,9 +145,9 @@ pub fn open_external(target: String) -> Result<(), String> {
 fn log_dir() -> std::path::PathBuf {
     let home = std::env::var_os(if cfg!(windows) { "LOCALAPPDATA" } else { "HOME" }).map(std::path::PathBuf::from);
     match home {
-        Some(h) if cfg!(target_os = "macos") => h.join("Library/Logs/Glidedesk"),
-        Some(h) if cfg!(windows) => h.join("Glidedesk").join("logs"),
-        Some(h) => h.join(".local/share/glidedesk/logs"),
+        Some(h) if cfg!(target_os = "macos") => h.join("Library/Logs/Nexpingdesk"),
+        Some(h) if cfg!(windows) => h.join("Nexpingdesk").join("logs"),
+        Some(h) => h.join(".local/share/nexpingdesk/logs"),
         None => std::env::temp_dir(),
     }
 }

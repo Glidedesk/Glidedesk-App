@@ -7,11 +7,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use glidedesk_config::{ClientEntry, Config, IpFilter, RemapPreset};
-use glidedesk_input::{Capture, CaptureControl, CaptureEvent, Hotkey, Pressed, Remap, hotkey};
-use glidedesk_layout::{EdgeContext, Engine, Focus, Layout, LinkSpec, Machine, Outcome, Warning};
-use glidedesk_net::{Admission, Advertiser, BindStatus, FrameReader, FrameWriter, Server as NetServer, Tuning};
-use glidedesk_proto::{
+use nexpingdesk_config::{ClientEntry, Config, IpFilter, RemapPreset};
+use nexpingdesk_input::{Capture, CaptureControl, CaptureEvent, Hotkey, Pressed, Remap, hotkey};
+use nexpingdesk_layout::{EdgeContext, Engine, Focus, Layout, LinkSpec, Machine, Outcome, Warning};
+use nexpingdesk_net::{Admission, Advertiser, BindStatus, FrameReader, FrameWriter, Server as NetServer, Tuning};
+use nexpingdesk_proto::{
     ClientPrefs, ClientSettings, Control, DeviceId, GoodbyeReason, Hello, Input, KeyCode, MAX_CONTROL_FRAME,
     MAX_INPUT_FRAME, MonitorInfo, PROTOCOL_VERSION, Platform, Point, RejectReason, Side, Welcome,
 };
@@ -21,7 +21,7 @@ use tracing::{debug, info, warn};
 
 use crate::health::{Health, HealthConfig, HealthState};
 use crate::{CoreError, MonitorSource, Notice};
-use glidedesk_ipc::views::{BindView, ClientView, MachineView, ServerView};
+use nexpingdesk_ipc::views::{BindView, ClientView, MachineView, ServerView};
 
 /// Includes the client's Argon2 password hashing when a password is set.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -79,7 +79,7 @@ pub struct ServerDeps {
     pub app_version: String,
     pub host_name: String,
     /// System clipboard (`None` where unsupported).
-    pub clipboard: Option<Box<dyn glidedesk_clipboard::Clipboard>>,
+    pub clipboard: Option<Box<dyn nexpingdesk_clipboard::Clipboard>>,
 }
 
 impl std::fmt::Debug for ServerDeps {
@@ -92,9 +92,9 @@ impl std::fmt::Debug for ServerDeps {
 pub fn start(config: Config, deps: ServerDeps) -> Result<ServerHandle, CoreError> {
     let local_monitors = (deps.monitors)().map_err(|e| CoreError::Input(e.to_string()))?;
     let net_cfg = &config.server.network;
-    let all_ifaces = glidedesk_net::list_interfaces();
+    let all_ifaces = nexpingdesk_net::list_interfaces();
     let plan =
-        glidedesk_net::resolve_bind(net_cfg.mode, &net_cfg.interfaces, &net_cfg.addresses, net_cfg.port, &all_ifaces);
+        nexpingdesk_net::resolve_bind(net_cfg.mode, &net_cfg.interfaces, &net_cfg.addresses, net_cfg.port, &all_ifaces);
     let tuning = Tuning {
         keep_alive: Duration::from_millis(u64::from(config.server.health.interval_ms)),
         idle_timeout: Duration::from_millis(u64::from(config.server.health.idle_timeout_ms)),
@@ -102,13 +102,13 @@ pub fn start(config: Config, deps: ServerDeps) -> Result<ServerHandle, CoreError
     let (net, bind) = NetServer::bind(&plan, tuning).map_err(|e| CoreError::Net(e.to_string()))?;
     let admission = Admission {
         filter: IpFilter::new(&net_cfg.allow_list, &net_cfg.block_list).unwrap_or_default(),
-        same_subnet: net_cfg.same_subnet_only.then(|| glidedesk_net::interfaces::bound_ifaddrs(&plan, &all_ifaces)),
+        same_subnet: net_cfg.same_subnet_only.then(|| nexpingdesk_net::interfaces::bound_ifaddrs(&plan, &all_ifaces)),
     };
     let name = if config.device.name.is_empty() { deps.host_name.clone() } else { config.device.name.clone() };
     let advertiser = if net_cfg.discovery {
         let port = net.local_addrs().first().map_or(net_cfg.port, SocketAddr::port);
         let scope = match net_cfg.mode {
-            glidedesk_config::BindMode::All => None,
+            nexpingdesk_config::BindMode::All => None,
             _ => Some((net_cfg.interfaces.as_slice(), net_cfg.addresses.as_slice())),
         };
         match Advertiser::start(config.device.id, &name, &deps.host_name, &deps.app_version, port, scope) {
@@ -148,7 +148,7 @@ enum HubEvent {
     /// The client moved files we sent as "cut": tell the sender side.
     Taken {
         id: DeviceId,
-        set: glidedesk_proto::FileSetId,
+        set: nexpingdesk_proto::FileSetId,
     },
     Hello {
         conn: quinn::Connection,
@@ -218,7 +218,7 @@ struct Hub {
     net: NetServer,
     bind: Vec<BindStatus>,
     /// Addresses we should listen on right now (follows networks going on/off).
-    plan: glidedesk_net::BindPlan,
+    plan: nexpingdesk_net::BindPlan,
     admission: Admission,
     advertiser: Option<Advertiser>,
     status_tx: watch::Sender<ServerView>,
@@ -246,8 +246,8 @@ struct Hub {
     /// Clients the user forgot (see [`ServerDeps::forgotten`]).
     forgotten: HashSet<DeviceId>,
     /// Server password; `None` = open.
-    verifier: Option<Arc<glidedesk_net::auth::Verifier>>,
-    throttle: Arc<glidedesk_net::auth::Throttle>,
+    verifier: Option<Arc<nexpingdesk_net::auth::Verifier>>,
+    throttle: Arc<nexpingdesk_net::auth::Throttle>,
 }
 
 /// How the pointer moved while a client had control, for diagnosing "the
@@ -395,7 +395,7 @@ impl Hub {
             hotkeys: Vec::new(),
             net,
             bind,
-            plan: glidedesk_net::BindPlan::Addrs(Vec::new()),
+            plan: nexpingdesk_net::BindPlan::Addrs(Vec::new()),
             admission,
             advertiser: None,
             status_tx,
@@ -419,7 +419,7 @@ impl Hub {
                 .network
                 .password
                 .as_ref()
-                .and_then(|p| glidedesk_net::auth::Verifier::from_hex(&p.salt, &p.key))
+                .and_then(|p| nexpingdesk_net::auth::Verifier::from_hex(&p.salt, &p.key))
                 .map(Arc::new),
             throttle: Arc::default(),
             config,
@@ -517,7 +517,7 @@ impl Hub {
         }
         let allow = &self.config.server.fullscreen_allow;
         let v =
-            glidedesk_input::fullscreen_app().is_some_and(|app| !allow.iter().any(|a| a.eq_ignore_ascii_case(&app)));
+            nexpingdesk_input::fullscreen_app().is_some_and(|app| !allow.iter().any(|a| a.eq_ignore_ascii_case(&app)));
         self.fullscreen = Some((now, v));
         v
     }
@@ -549,14 +549,14 @@ impl Hub {
     /// A chosen network went off or came back: listen on what is there now
     /// (connections on the other networks stay up) and say what is missing.
     fn watch_networks(&mut self) {
-        let all = glidedesk_net::list_interfaces();
+        let all = nexpingdesk_net::list_interfaces();
         let n = &self.config.server.network;
-        let plan = glidedesk_net::resolve_bind(n.mode, &n.interfaces, &n.addresses, n.port, &all);
+        let plan = nexpingdesk_net::resolve_bind(n.mode, &n.interfaces, &n.addresses, n.port, &all);
         // Also retry addresses that failed to bind last time (e.g. port busy).
         if plan != self.plan || self.bind.iter().any(|b| b.error.is_some()) {
             self.bind = self.net.update(&plan);
             if self.admission.same_subnet.is_some() {
-                self.admission.same_subnet = Some(glidedesk_net::interfaces::bound_ifaddrs(&plan, &all));
+                self.admission.same_subnet = Some(nexpingdesk_net::interfaces::bound_ifaddrs(&plan, &all));
             }
             if plan != self.plan {
                 info!(addrs = ?self.net.local_addrs(), old = ?self.plan, new = ?plan, "networks changed; listening again");
@@ -569,9 +569,9 @@ impl Hub {
     }
 
     /// Updates the "network is off" warnings; `true` when they changed.
-    fn note_networks(&mut self, all: &[glidedesk_net::NetInterface]) -> bool {
+    fn note_networks(&mut self, all: &[nexpingdesk_net::NetInterface]) -> bool {
         let n = &self.config.server.network;
-        let mut notes: Vec<String> = glidedesk_net::unavailable(n.mode, &n.interfaces, &n.addresses, all)
+        let mut notes: Vec<String> = nexpingdesk_net::unavailable(n.mode, &n.interfaces, &n.addresses, all)
             .into_iter()
             .map(|why| format!("{NET_NOTE}: {why} — sharing continues on the other networks"))
             .collect();
@@ -936,7 +936,7 @@ impl Hub {
             Some(RejectReason::RoleMismatch)
         } else if self.entry(id).is_some_and(|e| e.blocked) {
             Some(RejectReason::Blocked)
-        } else if self.forgotten.contains(&id) && !hello.features.has(glidedesk_proto::Features::REJOIN) {
+        } else if self.forgotten.contains(&id) && !hello.features.has(nexpingdesk_proto::Features::REJOIN) {
             Some(RejectReason::Forgotten)
         } else {
             None
@@ -1132,7 +1132,7 @@ impl Hub {
     /// macOS Secure Keyboard Entry keeps key presses on this Mac while a client
     /// has control; say so instead of silently typing into the wrong computer.
     fn check_secure_input(&mut self) {
-        let on = self.focused().is_some() && glidedesk_input::secure_input_active();
+        let on = self.focused().is_some() && nexpingdesk_input::secure_input_active();
         let has = self.warnings.iter().any(|w| w.starts_with(SECURE_INPUT_WARNING));
         if on == has {
             return;
@@ -1309,8 +1309,8 @@ impl Hub {
             files: sharing.files && entry.is_none_or(|e| e.files) && prefs.accept_files,
             draw_cursor: prefs.draw_cursor,
             led_sync: prefs.led_sync,
-            clipboard_receive: dir != glidedesk_config::Direction::FromClients,
-            clipboard_send: dir != glidedesk_config::Direction::ToClients,
+            clipboard_receive: dir != nexpingdesk_config::Direction::FromClients,
+            clipboard_send: dir != nexpingdesk_config::Direction::ToClients,
             clipboard_limit: sharing.max_clipboard_bytes,
             #[allow(clippy::cast_possible_truncation)]
             mouse_speed: self.mouse_speed_for(id) as f32,
@@ -1392,7 +1392,7 @@ impl Hub {
         let side = [Side::Right, Side::Left, Side::Top, Side::Bottom].into_iter().find(|s| !used.contains(s));
         // Per monitor: each screen's edge leads to the whole client edge and the
         // cursor comes back to the screen it left from (smooth with mixed sizes).
-        let per_monitor = |l: LinkSpec| LinkSpec { mapping: glidedesk_layout::Mapping::PerMonitor, ..l };
+        let per_monitor = |l: LinkSpec| LinkSpec { mapping: nexpingdesk_layout::Mapping::PerMonitor, ..l };
         let link = if let Some(side) = side {
             per_monitor(LinkSpec::simple(self.local_id, side, id))
         } else {
@@ -1589,7 +1589,7 @@ fn spawn_fetch_server(conn: quinn::Connection, id: DeviceId, name: String, sync:
             let ok = tokio::time::timeout(Duration::from_secs(10), recv.read_exact(&mut kind))
                 .await
                 .is_ok_and(|r| r.is_ok());
-            if ok && kind[0] == glidedesk_proto::stream_kind::FETCH {
+            if ok && kind[0] == nexpingdesk_proto::stream_kind::FETCH {
                 tokio::spawn(sync.clone().serve_fetch(send, recv, Some(id), name.clone()));
             } else {
                 let _ = recv.stop(0u32.into());
@@ -1604,10 +1604,10 @@ type Handshake = (quinn::Connection, FrameWriter, FrameReader, Hello, Option<Vec
 /// Nothing about a client is kept before it passes.
 async fn handshake(
     inc: quinn::Incoming,
-    verifier: Option<Arc<glidedesk_net::auth::Verifier>>,
-    throttle: Arc<glidedesk_net::auth::Throttle>,
+    verifier: Option<Arc<nexpingdesk_net::auth::Verifier>>,
+    throttle: Arc<nexpingdesk_net::auth::Throttle>,
 ) -> Result<Handshake, CoreError> {
-    use glidedesk_net::auth::{EXPORTER_LABEL, ServerChallenge};
+    use nexpingdesk_net::auth::{EXPORTER_LABEL, ServerChallenge};
     let net = |e: &dyn std::fmt::Display| CoreError::Net(e.to_string());
     let conn = inc.await.map_err(|e| net(&e))?;
     let (send, recv) = conn.accept_bi().await.map_err(|e| net(&e))?;
@@ -1688,7 +1688,7 @@ fn spawn_input_writer(
         let mut send = send;
         // Stream kind first; a QUIC stream only becomes visible to the peer
         // once data is sent, so this also announces it immediately.
-        if let Err(e) = send.write_all(&[glidedesk_proto::stream_kind::INPUT]).await {
+        if let Err(e) = send.write_all(&[nexpingdesk_proto::stream_kind::INPUT]).await {
             let _ = events.send(HubEvent::Closed { id, generation, reason: e.to_string() }).await;
             return;
         }
@@ -1779,7 +1779,7 @@ fn sanitize_monitors(m: Vec<MonitorInfo>) -> Vec<MonitorInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glidedesk_proto::{MonitorId, Rect};
+    use nexpingdesk_proto::{MonitorId, Rect};
 
     fn monitor(x: i32, w: i32, h: i32) -> MonitorInfo {
         MonitorInfo {

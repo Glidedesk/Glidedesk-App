@@ -1,9 +1,9 @@
 //! Network interface listing and bind-address resolution.
-//! Glidedesk runs on IPv4 only: IPv6 addresses are never listed or bound.
+//! Nexpingdesk runs on IPv4 only: IPv6 addresses are never listed or bound.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-use glidedesk_config::BindMode;
+use nexpingdesk_config::BindMode;
 use serde::Serialize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]

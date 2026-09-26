@@ -1,5 +1,5 @@
 #!/bin/sh
-# Creates Glidedesk's signing keys ONCE — no paid account needed.
+# Creates Nexpingdesk's signing keys ONCE — no paid account needed.
 #   macOS  : self-signed code-signing identity (stable → permissions survive updates)
 #   Windows: self-signed Authenticode certificate
 #   Linux  : minisign key for SHA256SUMS
@@ -20,7 +20,7 @@ pw="$(cat "$out/password")"
 
 cert() { # name cn
   openssl req -x509 -newkey rsa:3072 -sha256 -days 3650 -nodes \
-    -keyout "$out/$1.key" -out "$out/$1.crt" -subj "/CN=$2/O=Glidedesk" \
+    -keyout "$out/$1.key" -out "$out/$1.crt" -subj "/CN=$2/O=Nexpingdesk" \
     -addext "basicConstraints=critical,CA:FALSE" \
     -addext "keyUsage=critical,digitalSignature" \
     -addext "extendedKeyUsage=critical,codeSigning" 2>/dev/null
@@ -29,26 +29,26 @@ cert() { # name cn
     -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1 \
     -out "$out/$1.p12" -passout "pass:$pw"
 }
-cert mac "Glidedesk Code Signing"
-cert win "Glidedesk"
-openssl x509 -in "$out/win.crt" -outform DER -out signing/glidedesk-codesign.cer
-cp "$out/mac.crt" signing/glidedesk-macos-codesign.pem
-chmod 644 signing/glidedesk-codesign.cer signing/glidedesk-macos-codesign.pem
+cert mac "Nexpingdesk Code Signing"
+cert win "Nexpingdesk"
+openssl x509 -in "$out/win.crt" -outform DER -out signing/nexpingdesk-codesign.cer
+cp "$out/mac.crt" signing/nexpingdesk-macos-codesign.pem
+chmod 644 signing/nexpingdesk-codesign.cer signing/nexpingdesk-macos-codesign.pem
 minisign -G -W -p signing/minisign.pub -s "$out/minisign.key" >/dev/null
 chmod 644 signing/minisign.pub
 
 # Values for GitHub → Settings → Secrets and variables → Actions.
 {
-  echo "GLIDEDESK_SIGN_PASSWORD=$pw"
-  echo "GLIDEDESK_MAC_P12_BASE64=$(base64 -w0 "$out/mac.p12")"
-  echo "GLIDEDESK_WIN_PFX_BASE64=$(base64 -w0 "$out/win.p12")"
-  echo "GLIDEDESK_MINISIGN_KEY_BASE64=$(base64 -w0 "$out/minisign.key")"
+  echo "NEXPINGDESK_SIGN_PASSWORD=$pw"
+  echo "NEXPINGDESK_MAC_P12_BASE64=$(base64 -w0 "$out/mac.p12")"
+  echo "NEXPINGDESK_WIN_PFX_BASE64=$(base64 -w0 "$out/win.p12")"
+  echo "NEXPINGDESK_MINISIGN_KEY_BASE64=$(base64 -w0 "$out/minisign.key")"
 } > "$out/github-secrets.env"
 chmod 600 "$out"/*
 cat <<MSG
 Signing keys created.
   Private (keep safe, never commit): $out/
-  Public (commit these):             signing/glidedesk-codesign.cer, signing/glidedesk-macos-codesign.pem, signing/minisign.pub
+  Public (commit these):             signing/nexpingdesk-codesign.cer, signing/nexpingdesk-macos-codesign.pem, signing/minisign.pub
 For GitHub Actions add the 4 secrets in $out/github-secrets.env, e.g. with the GitHub CLI:
   while IFS='=' read -r k v; do gh secret set "\$k" --body "\$v"; done < $out/github-secrets.env
 Local builds (make release) use $out/ automatically.

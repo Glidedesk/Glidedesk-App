@@ -20,7 +20,7 @@ export function SharingPage({ status, config, update }: { status: AgentStatus; c
       <Callout tone="info">
         The clipboard follows the cursor. Text and images go with you when you move to another computer. Copied files and folders (any
         size) are only <b>offered</b>: nothing is copied until you paste them in a folder there — then they download and your file manager
-        pastes them. Files that were already on the clipboard when Glidedesk started, or were copied over an hour ago, are not offered.
+        pastes them. Files that were already on the clipboard when Nexpingdesk started, or were copied over an hour ago, are not offered.
         Everything that happens is listed under Activity below.
       </Callout>
       <Transfers list={status.server?.transfers ?? status.client?.transfers ?? []} />

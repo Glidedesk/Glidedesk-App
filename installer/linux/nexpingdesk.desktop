@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=Glidedesk
+Name=Nexpingdesk
 GenericName=Keyboard and mouse sharing
 Comment=One keyboard and mouse for all your computers
-Exec=glidedesk
-Icon=glidedesk
+Exec=nexpingdesk
+Icon=nexpingdesk
 Terminal=false
 Categories=Utility;Network;
 Keywords=kvm;mouse;keyboard;share;clipboard;

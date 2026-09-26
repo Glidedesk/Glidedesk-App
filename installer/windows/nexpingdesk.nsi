@@ -1,4 +1,4 @@
-; Glidedesk installer / upgrader / uninstaller.
+; Nexpingdesk installer / upgrader / uninstaller.
 ;
 ; One setup.exe handles every case:
 ;   nothing installed  -> Install     (wizard)
@@ -20,8 +20,8 @@
 Unicode true
 !ifdef SIGN
   ; Sign the uninstaller and the finished installer with the self-signed certificate.
-  !uninstfinalize 'gd-sign-windows "%1"' = 0
-  !finalize 'gd-sign-windows "%1"' = 0
+  !uninstfinalize 'nd-sign-windows "%1"' = 0
+  !finalize 'nd-sign-windows "%1"' = 0
 !endif
 ManifestDPIAware true
 ManifestSupportedOS all
@@ -37,9 +37,12 @@ SetCompressorDictSize 32
 !include "x64.nsh"
 !include "WinVer.nsh"
 
-!define PRODUCT "Glidedesk"
-!define PUBLISHER "Glidedesk"
-!define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Glidedesk"
+!define PRODUCT "Nexpingdesk"
+!define PUBLISHER "Nexpingdesk"
+!define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Nexpingdesk"
+; The app's former name: a copy installed under it is removed on install.
+!define LEGACY_PRODUCT "Glidedesk"
+!define LEGACY_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Glidedesk"
 !define RUN_KEY "Software\Microsoft\Windows\CurrentVersion\Run"
 !define WV2_GUID "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 !if ${WEBVIEW2_OFFLINE} == 1
@@ -116,15 +119,15 @@ FunctionEnd
 !macro StopApp DIR UN
   ; Graceful: the agent releases keys, says goodbye to other computers and
   ; finishes writing files. `--shutdown` waits up to 10 s for it to exit.
-  ${If} ${FileExists} "${DIR}\glidedesk.exe"
-    nsExec::Exec '"${DIR}\glidedesk.exe" --shutdown'
+  ${If} ${FileExists} "${DIR}\nexpingdesk.exe"
+    nsExec::Exec '"${DIR}\nexpingdesk.exe" --shutdown'
     Pop $0
-  ${ElseIf} ${FileExists} "${DIR}\glidedesk-agent.exe"
-    nsExec::Exec '"${DIR}\glidedesk-agent.exe" --shutdown'
+  ${ElseIf} ${FileExists} "${DIR}\nexpingdesk-agent.exe"
+    nsExec::Exec '"${DIR}\nexpingdesk-agent.exe" --shutdown'
     Pop $0
   ${EndIf}
   ; Then ask the tray app to close, and wait up to 10 s before forcing.
-  nsExec::Exec 'taskkill /IM glidedesk.exe /T'
+  nsExec::Exec 'taskkill /IM nexpingdesk.exe /T'
   Pop $0
   StrCpy $R9 0
   ${Do}
@@ -138,20 +141,20 @@ FunctionEnd
   ${LoopUntil} $R9 >= 20
   ${If} $R8 == "1"
     DetailPrint "${PRODUCT} did not close in time; forcing it to stop."
-    nsExec::Exec 'taskkill /F /IM glidedesk.exe /T'
+    nsExec::Exec 'taskkill /F /IM nexpingdesk.exe /T'
     Pop $0
   ${EndIf}
-  nsExec::Exec 'taskkill /F /IM glidedesk-agent.exe /T'
+  nsExec::Exec 'taskkill /F /IM nexpingdesk-agent.exe /T'
   Pop $0
   Sleep 300
 !macroend
 
 !macro IsAppRunningBody
   ; Returns "1" or "0" on the stack.
-  nsExec::ExecToStack 'tasklist /FI "IMAGENAME eq glidedesk.exe" /NH'
+  nsExec::ExecToStack 'tasklist /FI "IMAGENAME eq nexpingdesk.exe" /NH'
   Pop $0
   Pop $1
-  ${WordFind} "$1" "glidedesk.exe" "E+1{" $2
+  ${WordFind} "$1" "nexpingdesk.exe" "E+1{" $2
   ${If} ${Errors}
     Push "0"
   ${Else}
@@ -167,7 +170,7 @@ FunctionEnd
 
 ; Start the app as the signed-in user, not elevated (the installer runs as admin).
 Function LaunchAsUser
-  Exec '"$WINDIR\explorer.exe" "$INSTDIR\glidedesk.exe"'
+  Exec '"$WINDIR\explorer.exe" "$INSTDIR\nexpingdesk.exe"'
 FunctionEnd
 
 Function EnsureWebView2
@@ -187,7 +190,7 @@ Function EnsureWebView2
     ${If} $1 != 0
       DetailPrint "WebView2 runtime install failed (code $1)."
       StrCpy $Warn 3
-      MessageBox MB_ICONEXCLAMATION|MB_OK "The WebView2 runtime could not be installed (code $1).$\r$\nGlidedesk's settings window needs it.${WV2_HINT}" /SD IDOK
+      MessageBox MB_ICONEXCLAMATION|MB_OK "The WebView2 runtime could not be installed (code $1).$\r$\nNexpingdesk's settings window needs it.${WV2_HINT}" /SD IDOK
     ${EndIf}
   ${EndIf}
 FunctionEnd
@@ -233,7 +236,7 @@ Function .onInit
   ReadRegStr $OldArch HKLM "${UNINST_KEY}" "Architecture"
 
   ${If} $OldVersion == ""
-  ${OrIfNot} ${FileExists} "$OldDir\glidedesk.exe"
+  ${OrIfNot} ${FileExists} "$OldDir\nexpingdesk.exe"
     StrCpy $Mode "install"
     Return
   ${EndIf}
@@ -323,9 +326,22 @@ Section "Install"
     ${EndIf}
   ${EndIf}
 
+  ; A copy installed under the app's former name would capture the keyboard and
+  ; mouse as well: run its own uninstaller, keeping its settings (Nexpingdesk
+  ; takes them over on first start).
+  ReadRegStr $0 HKLM "${LEGACY_UNINST_KEY}" "InstallLocation"
+  ${If} $0 != ""
+  ${AndIf} ${FileExists} "$0\uninstall.exe"
+    DetailPrint "Removing ${LEGACY_PRODUCT}…"
+    CopyFiles /SILENT "$0\uninstall.exe" "$PLUGINSDIR\legacy-uninstall.exe"
+    ExecWait '"$PLUGINSDIR\legacy-uninstall.exe" /S /KEEPCONFIG=1 _?=$0' $1
+    RMDir /r "$0"
+    DeleteRegKey HKLM "${LEGACY_UNINST_KEY}"
+  ${EndIf}
+
   ; Back up the current program folder for automatic rollback.
   RMDir /r "$INSTDIR.old"
-  ${If} ${FileExists} "$INSTDIR\glidedesk.exe"
+  ${If} ${FileExists} "$INSTDIR\nexpingdesk.exe"
     ClearErrors
     Rename "$INSTDIR" "$INSTDIR.old"
     ${If} ${Errors}
@@ -338,13 +354,13 @@ Section "Install"
   ClearErrors
   SetOutPath "$INSTDIR"
   SetOverwrite on
-  File /oname=glidedesk.exe "${APP_EXE}"
-  File /oname=glidedesk.ico "${ICON}"
+  File /oname=nexpingdesk.exe "${APP_EXE}"
+  File /oname=nexpingdesk.ico "${ICON}"
   WriteUninstaller "$INSTDIR\uninstall.exe"
   ${If} ${Errors}
     DetailPrint "Copy failed — restoring the previous version."
     RMDir /r "$INSTDIR"
-    ${If} ${FileExists} "$INSTDIR.old\glidedesk.exe"
+    ${If} ${FileExists} "$INSTDIR.old\nexpingdesk.exe"
       Rename "$INSTDIR.old" "$INSTDIR"
       ${If} $WasRunning == 1
         Call LaunchAsUser
@@ -363,7 +379,7 @@ Section "Install"
   WriteRegStr HKLM "${UNINST_KEY}" "DisplayName" "${PRODUCT}"
   WriteRegStr HKLM "${UNINST_KEY}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKLM "${UNINST_KEY}" "Publisher" "${PUBLISHER}"
-  WriteRegStr HKLM "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\glidedesk.ico"
+  WriteRegStr HKLM "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\nexpingdesk.ico"
   WriteRegStr HKLM "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKLM "${UNINST_KEY}" "Architecture" "${ARCH}"
   WriteRegStr HKLM "${UNINST_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'
@@ -374,19 +390,19 @@ Section "Install"
 
   ; Start at login (fresh installs; the app's own setting manages it afterwards).
   ${If} $Mode == "install"
-    WriteRegStr HKCU "${RUN_KEY}" "${PRODUCT}" '"$INSTDIR\glidedesk.exe" --background'
+    WriteRegStr HKCU "${RUN_KEY}" "${PRODUCT}" '"$INSTDIR\nexpingdesk.exe" --background'
   ${EndIf}
 
   ; Shortcuts.
-  CreateShortcut "$SMPROGRAMS\${PRODUCT}.lnk" "$INSTDIR\glidedesk.exe" "" "$INSTDIR\glidedesk.ico"
+  CreateShortcut "$SMPROGRAMS\${PRODUCT}.lnk" "$INSTDIR\nexpingdesk.exe" "" "$INSTDIR\nexpingdesk.ico"
   ${If} $DesktopShortcut == ${BST_CHECKED}
-    CreateShortcut "$DESKTOP\${PRODUCT}.lnk" "$INSTDIR\glidedesk.exe" "" "$INSTDIR\glidedesk.ico"
+    CreateShortcut "$DESKTOP\${PRODUCT}.lnk" "$INSTDIR\nexpingdesk.exe" "" "$INSTDIR\nexpingdesk.ico"
   ${EndIf}
 
   ; Firewall: inbound UDP for the agent, private + domain networks only.
   nsExec::Exec 'netsh advfirewall firewall delete rule name="${PRODUCT}"'
   Pop $0
-  nsExec::Exec 'netsh advfirewall firewall add rule name="${PRODUCT}" dir=in action=allow program="$INSTDIR\glidedesk.exe" protocol=UDP profile=private,domain enable=yes'
+  nsExec::Exec 'netsh advfirewall firewall add rule name="${PRODUCT}" dir=in action=allow program="$INSTDIR\nexpingdesk.exe" protocol=UDP profile=private,domain enable=yes'
   Pop $0
   ${If} $0 != 0
     DetailPrint "Adding the firewall rule failed (code $0)."
@@ -394,7 +410,7 @@ Section "Install"
     MessageBox MB_ICONEXCLAMATION|MB_OK "Windows Firewall rule for ${PRODUCT} could not be added (code $0).$\r$\nOther computers may not be able to connect until you allow ${PRODUCT} on private networks." /SD IDOK
   ${EndIf}
   ; Remove the separate agent of versions before 0.2.
-  Delete "$INSTDIR\glidedesk-agent.exe"
+  Delete "$INSTDIR\nexpingdesk-agent.exe"
 
   ; Success: drop the backup.
   RMDir /r "$INSTDIR.old"
@@ -468,9 +484,9 @@ Section "Uninstall"
   SetRegView 64
   !insertmacro StopApp "$INSTDIR" "un."
 
-  Delete "$INSTDIR\glidedesk.exe"
-  Delete "$INSTDIR\glidedesk-agent.exe"
-  Delete "$INSTDIR\glidedesk.ico"
+  Delete "$INSTDIR\nexpingdesk.exe"
+  Delete "$INSTDIR\nexpingdesk-agent.exe"
+  Delete "$INSTDIR\nexpingdesk.ico"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
   RMDir /r "$INSTDIR.old"
@@ -486,11 +502,11 @@ Section "Uninstall"
   DeleteRegKey HKLM "${UNINST_KEY}"
   ; Start-at-login entry written by the app for this user.
   DeleteRegValue HKCU "${RUN_KEY}" "${PRODUCT}"
-  DeleteRegValue HKCU "${RUN_KEY}" "glidedesk"
+  DeleteRegValue HKCU "${RUN_KEY}" "nexpingdesk"
 
   ; Web view cache is never kept.
   SetShellVarContext current
-  RMDir /r "$LOCALAPPDATA\app.glidedesk.desktop"
+  RMDir /r "$LOCALAPPDATA\app.nexpingdesk.desktop"
   ${If} $KeepConfig == 0
     RMDir /r "$APPDATA\${PRODUCT}"
     RMDir /r "$LOCALAPPDATA\${PRODUCT}"

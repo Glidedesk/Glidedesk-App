@@ -28,7 +28,7 @@ mod windows;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use glidedesk_proto::{Input, KeyCode, LedState, MonitorInfo, MouseButton, Point};
+use nexpingdesk_proto::{Input, KeyCode, LedState, MonitorInfo, MouseButton, Point};
 use tokio::sync::mpsc;
 
 pub use hotkey::{Hotkey, HotkeyError};
