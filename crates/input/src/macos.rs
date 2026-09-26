@@ -651,23 +651,35 @@ fn handle(shared: &Shared, ty: CGEventType, ev: &CGEvent, pass: *mut CGEvent) ->
             drop(motion);
             shared.emit(CaptureEvent::Motion { pos, dx, dy });
         }
-        CGEventType::LeftMouseDown | CGEventType::LeftMouseUp => {
-            shared.emit(CaptureEvent::Button { button: MouseButton::Left, down: ty == CGEventType::LeftMouseDown });
-        }
-        CGEventType::RightMouseDown | CGEventType::RightMouseUp => {
-            shared.emit(CaptureEvent::Button { button: MouseButton::Right, down: ty == CGEventType::RightMouseDown });
-        }
-        CGEventType::OtherMouseDown | CGEventType::OtherMouseUp => {
+        CGEventType::LeftMouseDown
+        | CGEventType::LeftMouseUp
+        | CGEventType::RightMouseDown
+        | CGEventType::RightMouseUp
+        | CGEventType::OtherMouseDown
+        | CGEventType::OtherMouseUp => {
+            let down =
+                matches!(ty, CGEventType::LeftMouseDown | CGEventType::RightMouseDown | CGEventType::OtherMouseDown);
+            let number = match ty {
+                CGEventType::LeftMouseDown | CGEventType::LeftMouseUp => 0,
+                CGEventType::RightMouseDown | CGEventType::RightMouseUp => 1,
+                _ => field(CGEventField::MouseEventButtonNumber),
+            };
+            let grabbed = shared.grabbed.load(Ordering::Relaxed);
+            if shared.gate.on_button(u32::try_from(number).unwrap_or(u32::MAX), down, grabbed) {
+                return pass;
+            }
             // Buttons 6 and up have no counterpart on the other computer: swallowed
             // while grabbed, but not sent as a middle click (as they used to be).
-            let button = match field(CGEventField::MouseEventButtonNumber) {
+            let button = match number {
+                0 => Some(MouseButton::Left),
+                1 => Some(MouseButton::Right),
                 2 => Some(MouseButton::Middle),
                 3 => Some(MouseButton::Back),
                 4 => Some(MouseButton::Forward),
                 _ => None,
             };
             if let Some(button) = button {
-                shared.emit(CaptureEvent::Button { button, down: ty == CGEventType::OtherMouseDown });
+                shared.emit(CaptureEvent::Button { button, down });
             }
         }
         CGEventType::ScrollWheel => {

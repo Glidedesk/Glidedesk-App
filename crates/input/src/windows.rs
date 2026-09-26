@@ -221,18 +221,28 @@ unsafe extern "system" fn mouse_hook(code: i32, wparam: WPARAM, lparam: LPARAM) 
                 shared.emit(CaptureEvent::Motion { pos, dx: pt.x - old.x, dy: pt.y - old.y });
             }
         }
-        WM_LBUTTONDOWN | WM_LBUTTONUP => {
-            shared.emit(CaptureEvent::Button { button: MouseButton::Left, down: msg == WM_LBUTTONDOWN });
-        }
-        WM_RBUTTONDOWN | WM_RBUTTONUP => {
-            shared.emit(CaptureEvent::Button { button: MouseButton::Right, down: msg == WM_RBUTTONDOWN });
-        }
-        WM_MBUTTONDOWN | WM_MBUTTONUP => {
-            shared.emit(CaptureEvent::Button { button: MouseButton::Middle, down: msg == WM_MBUTTONDOWN });
-        }
-        WM_XBUTTONDOWN | WM_XBUTTONUP => {
-            let button = if hi == 2 { MouseButton::Forward } else { MouseButton::Back };
-            shared.emit(CaptureEvent::Button { button, down: msg == WM_XBUTTONDOWN });
+        WM_LBUTTONDOWN | WM_LBUTTONUP | WM_RBUTTONDOWN | WM_RBUTTONUP | WM_MBUTTONDOWN | WM_MBUTTONUP
+        | WM_XBUTTONDOWN | WM_XBUTTONUP => {
+            let down = matches!(msg, WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN);
+            let button = match msg {
+                WM_LBUTTONDOWN | WM_LBUTTONUP => MouseButton::Left,
+                WM_RBUTTONDOWN | WM_RBUTTONUP => MouseButton::Right,
+                WM_MBUTTONDOWN | WM_MBUTTONUP => MouseButton::Middle,
+                _ if hi == 2 => MouseButton::Forward,
+                _ => MouseButton::Back,
+            };
+            // Numbered as on macOS: left, right, middle, back, forward.
+            let number = match button {
+                MouseButton::Left => 0,
+                MouseButton::Right => 1,
+                MouseButton::Middle => 2,
+                MouseButton::Back => 3,
+                MouseButton::Forward => 4,
+            };
+            if shared.gate.on_button(number, down, grabbed) {
+                return pass();
+            }
+            shared.emit(CaptureEvent::Button { button, down });
         }
         WM_MOUSEWHEEL => shared.emit(CaptureEvent::Wheel { dx: 0, dy: hi }),
         WM_MOUSEHWHEEL => shared.emit(CaptureEvent::Wheel { dx: hi, dy: 0 }),
