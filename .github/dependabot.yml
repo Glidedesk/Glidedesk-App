@@ -1,20 +1,31 @@
-# Weekly dependency updates, grouped so each ecosystem is one pull request.
-# Every update runs the full CI (tests on Linux, Windows and macOS) before merging.
+# Dependency updates, fully automated: Dependabot opens grouped pull requests every
+# week, CI tests them on Linux, Windows and macOS, and patch/minor updates merge
+# themselves once "CI passed" (see the automerge job in ci.yml). Major updates stay
+# open for a maintainer. New releases wait 7 days (cooldown) before they're proposed.
 version: 2
 updates:
   - package-ecosystem: cargo
     directory: /
     schedule: { interval: weekly, day: monday }
-    open-pull-requests-limit: 5
+    cooldown: { default-days: 7 }
+    open-pull-requests-limit: 10
+    labels: [dependencies, rust]
+    commit-message: { prefix: "deps" }
     groups:
       cargo:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      # Pinned by Tauri's GTK 3 stack (gtk-rs 0.18) until Tauri moves on.
+      - dependency-name: glib
 
   - package-ecosystem: npm
     directory: /app/ui
     schedule: { interval: weekly, day: monday }
-    open-pull-requests-limit: 5
+    cooldown: { default-days: 7 }
+    open-pull-requests-limit: 10
+    labels: [dependencies, ui]
+    commit-message: { prefix: "deps(ui)" }
     groups:
       ui:
         patterns: ["*"]
@@ -23,10 +34,17 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 7 }
+    labels: [dependencies, ci]
+    commit-message: { prefix: "ci" }
     groups:
       actions:
         patterns: ["*"]
+        update-types: [minor, patch]
 
   - package-ecosystem: docker
     directory: /docker
     schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 7 }
+    labels: [dependencies, docker]
+    commit-message: { prefix: "build" }

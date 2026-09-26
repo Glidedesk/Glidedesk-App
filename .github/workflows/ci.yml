@@ -1,7 +1,8 @@
 # Glidedesk CI — the one pipeline.
 #
-#   pull request / manual run → test (Linux, Windows, macOS natively)
-#   push to main              → test → build installers → "Nightly" pre-release
+#   pull request              → test (Linux, Windows, macOS natively)
+#   Dependabot pull request   → test → auto-merge (patch/minor) → Nightly
+#   push to main / manual run → test → build installers → "Nightly" pre-release
 #   tag v*                    → test → build installers → release
 #
 # Nothing is built or published unless every test job passed ("CI passed", also
@@ -214,12 +215,45 @@ jobs:
           echo "results: $RESULTS"
           for r in $RESULTS; do [ "$r" = success ] || exit 1; done
 
+  # Dependabot patch/minor updates merge themselves once every test passed; major
+  # updates wait for a maintainer. A merge made with the workflow token doesn't
+  # trigger a push run, so the job starts the Nightly build on main itself.
+  automerge:
+    name: Auto-merge Dependabot update
+    needs: [ok]
+    # Numeric account id of Dependabot (a login can be spoofed); branch in this repo.
+    # dependabot/fetch-metadata also refuses to run unless the actor is Dependabot.
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.id == 49699333 && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # merge the pull request
+      pull-requests: write # merge the pull request
+      actions: write # start the Nightly build on main
+    steps:
+      - id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+      - name: Merge (patch and minor updates only)
+        if: steps.meta.outputs.update-type != 'version-update:semver-major'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          TESTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Only the commit that was tested: refused if the branch moved since.
+          gh pr merge "$PR" --squash --delete-branch --match-head-commit "$TESTED_SHA"
+          gh workflow run ci.yml --ref main
+      - name: Major update — left for review
+        if: steps.meta.outputs.update-type == 'version-update:semver-major'
+        run: echo "::notice::Major version update — review and merge it by hand."
+
   # ──────────────── release (main and v* tags, after "CI passed") ────────────────
 
   package-windows:
     name: Package — Windows x64 (built on Linux)
     needs: [ok]
-    if: github.event_name == 'push' && !github.event.repository.fork && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && !github.event.repository.fork && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: release
@@ -280,7 +314,7 @@ jobs:
   package-linux:
     name: Package — Linux ${{ matrix.arch }}
     needs: [ok]
-    if: github.event_name == 'push' && !github.event.repository.fork && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && !github.event.repository.fork && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     strategy:
       matrix:
         include:
@@ -331,7 +365,7 @@ jobs:
   package-macos:
     name: Package — macOS Apple Silicon
     needs: [ok]
-    if: github.event_name == 'push' && !github.event.repository.fork && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && !github.event.repository.fork && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: macos-15
     timeout-minutes: 60
     environment: release
