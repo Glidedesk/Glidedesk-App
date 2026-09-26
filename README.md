@@ -55,8 +55,10 @@ build of `main`.
 
 Open the `.dmg` and drag **Glidedesk** to Applications. On first launch, right-click the app and
 choose **Open** (on macOS 15 and later: System Settings → Privacy & Security → Open Anyway). Then
-click **Allow…** and turn Glidedesk on under **Accessibility**. That is the only permission
-Glidedesk needs.
+click **Allow…** and turn Glidedesk on under **Accessibility**, the one permission Glidedesk
+needs. On the Mac whose keyboard and mouse you share, also allow **Input Monitoring**
+(*Advanced → macOS permissions*). It is optional, but without it an external mouse's gestures,
+for example from Logi Options+, keep acting on the Mac while another computer has control.
 </details>
 
 <details>

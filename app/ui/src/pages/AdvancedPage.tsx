@@ -139,8 +139,22 @@ export function AdvancedPage({ status, config, update, reload }: { status: Agent
               </>
             )}
           </Row>
-          <Row label="Input Monitoring" hint="Not required. Only turn it on if typing doesn't reach your other computers.">
-            {status.permissions.input_monitoring ? <Badge tone="ok">Allowed</Badge> : <Button variant="ghost" onClick={() => void run(() => api.openExternal("input-monitoring"))}>Open settings</Button>}
+          <Row
+            label="Input Monitoring"
+            hint="Recommended on the server: keeps an external mouse's gestures (e.g. from Logi Options+) off this Mac while another computer has control."
+          >
+            {status.permissions.input_monitoring ? (
+              <Badge tone="ok">Allowed</Badge>
+            ) : (
+              <>
+                {status.permissions.accessibility && (
+                  <Button variant="primary" onClick={() => void run(() => api.requestPermissions())}>
+                    Allow…
+                  </Button>
+                )}
+                <Button onClick={() => void run(() => api.openExternal("input-monitoring"))}>Open settings</Button>
+              </>
+            )}
           </Row>
         </Section>
       )}

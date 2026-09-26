@@ -20,6 +20,8 @@ pub mod remap;
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+mod macos_hid;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -132,7 +134,8 @@ pub struct Permissions {
     /// macOS Accessibility: posting events *and* the active event tap the
     /// server uses. Linux: a virtual input device (uinput) or `XTest`. Always true on Windows.
     pub accessibility: bool,
-    /// macOS Input Monitoring (listen-only taps — not needed by Glidedesk, shown for
+    /// macOS Input Monitoring: lets the server take external mice exclusively while
+    /// another computer has control, so their gestures can't act here (optional; shown for
     /// information). Linux: an X11 session, needed to share this computer's input.
     pub input_monitoring: bool,
 }

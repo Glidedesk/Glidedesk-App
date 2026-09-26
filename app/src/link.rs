@@ -94,7 +94,7 @@ pub async fn supervise(app: AppHandle, link: Arc<Link>) {
                             }
                             *link.status.write().unwrap_or_else(std::sync::PoisonError::into_inner) = (*s).clone();
                             let _ = app.emit("agent-status", &*s);
-                            crate::tray::refresh(&app, &s);
+                            refresh_tray(&app, *s);
                         }
                         Event::Notice(n) => on_notice(&app, &n),
                         Event::ConfigChanged => {
@@ -109,7 +109,7 @@ pub async fn supervise(app: AppHandle, link: Arc<Link>) {
                     }
                 }
                 *link.client.lock().await = None;
-                crate::tray::refresh(&app, &AgentStatus::default());
+                refresh_tray(&app, AgentStatus::default());
             }
             Err(IpcError::NotRunning | IpcError::Io(_)) => {
                 // Avoid spawn storms: at most one spawn per 3 s.
@@ -155,4 +155,14 @@ fn on_notice(app: &AppHandle, n: &NoticeView) {
         let _ = app.notification().builder().title(title).body(body).show();
     }
     let _ = app.get_webview_window("main");
+}
+
+/// Updates the tray on the main thread. Called from here (an async worker) the
+/// menu's text updates left their autoreleased objects on a thread that never
+/// drains them (macOS): the app's memory grew with every status, once a second.
+fn refresh_tray(app: &AppHandle, status: AgentStatus) {
+    let handle = app.clone();
+    if app.run_on_main_thread(move || crate::tray::refresh(&handle, &status)).is_err() {
+        tracing::debug!("tray not refreshed: the app is closing");
+    }
 }

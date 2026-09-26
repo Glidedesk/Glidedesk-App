@@ -119,8 +119,11 @@ mod macos {
 
     pub fn trash(path: &std::path::Path) -> Result<(), String> {
         use objc2_foundation::{NSFileManager, NSString, NSURL};
-        let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
-        NSFileManager::defaultManager().trashItemAtURL_resultingItemURL_error(&url, None).map_err(|e| e.to_string())
+        // Its own autorelease pool: called on worker threads that have none.
+        objc2::rc::autoreleasepool(|_| {
+            let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+            NSFileManager::defaultManager().trashItemAtURL_resultingItemURL_error(&url, None).map_err(|e| e.to_string())
+        })
     }
 
     pub fn session_status() -> ClientStatus {
