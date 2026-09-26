@@ -12,7 +12,8 @@
 #   - the token is read-only by default; only the publish job can write
 #   - pull requests (also from forks) get no secrets and never reach the release jobs
 #   - signing keys are secrets of the "release" environment, which only main and
-#     v* tags can use; the repository itself has no secrets
+#     v* tags can use; the repository itself has no secrets (a private repository
+#     on GitHub Free has no environments: the same secrets are then set on it)
 #   - every action is pinned to a full commit SHA (Dependabot keeps them current)
 #   - test caches are saved from main only; release builds use no cache at all
 #   - downloaded tools are pinned by version and SHA-256
@@ -454,7 +455,9 @@ jobs:
           cargo xtask checksums
           rm -f "$RUNNER_TEMP/minisign.key"
           ls -la output-build
+      # Attestations need a public repository (or GitHub Enterprise): skipped while private.
       - name: Build provenance
+        if: ${{ !github.event.repository.private }}
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: output-build/*
@@ -462,11 +465,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          PRIVATE: ${{ github.event.repository.private }}
         run: |
+          verify="\`minisign -Vm SHA256SUMS -p minisign.pub\`"
+          if [ "$PRIVATE" != true ]; then verify="\`gh attestation verify <file> --repo $GITHUB_REPOSITORY\` and $verify"; fi
           if [ "$IS_TAG" = true ]; then
             gh release create "$GITHUB_REF_NAME" output-build/* --title "Glidedesk $GITHUB_REF_NAME" --generate-notes --verify-tag
           else
             gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
             gh release create nightly output-build/* --prerelease --target "$GITHUB_SHA" --title "Nightly" \
-              --notes "Latest build of main (${GITHUB_SHA::7}): macOS Apple Silicon, Windows x64 (installer, offline installer, portable), Linux x64 and ARM64. Verify: \`gh attestation verify <file> --repo $GITHUB_REPOSITORY\` and \`minisign -Vm SHA256SUMS -p minisign.pub\`."
+              --notes "Latest build of main (${GITHUB_SHA::7}): macOS Apple Silicon, Windows x64 (installer, offline installer, portable), Linux x64 and ARM64. Verify: $verify."
           fi
