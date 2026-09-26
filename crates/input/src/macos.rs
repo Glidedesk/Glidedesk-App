@@ -26,6 +26,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 use crate::keymap::{self, hid};
+use crate::macos_hid::{self, HidEvent};
 use crate::pin;
 use crate::{CAPTURE_QUEUE, Capture, CaptureControl, CaptureEvent, Injector, InputError, Permissions, Pressed};
 
@@ -175,11 +176,16 @@ unsafe extern "C" {
 /// adds the app to the Accessibility list. Call it from the app process (the one
 /// macOS knows as Glidedesk), not from the background agent.
 ///
-/// Only Accessibility is requested: an *active* event tap and posting events
-/// both fall under it. Input Monitoring covers listen-only taps, which Glidedesk
-/// doesn't use, and granting it makes macOS ask to quit the app.
+/// Accessibility first: an *active* event tap and posting events both fall
+/// under it. Once it is there, Input Monitoring (optional) for taking external
+/// mice exclusively; granting it makes macOS ask to quit the app once.
 pub fn request_permissions() {
     if accessibility_granted() {
+        // Optional: keeps an external mouse's gestures off this Mac while another
+        // computer has control (see `macos_hid`). Asked once Accessibility is there.
+        if !macos_hid::access_granted() {
+            macos_hid::request_access();
+        }
         return;
     }
     let key = objc2_foundation::NSString::from_str("AXTrustedCheckOptionPrompt");
@@ -266,6 +272,8 @@ struct Shared {
     taps: Mutex<Option<Taps>>,
     /// Where the hidden cursor is kept while grabbed, and how far it may drift.
     pin: Mutex<(Point, i32)>,
+    /// External mice, taken exclusively while grabbed (see `macos_hid`).
+    seizer: Mutex<Option<macos_hid::Seizer>>,
     /// Motion across our warps (see `crate::pin`). Its lock also keeps the
     /// capture thread from pulling the cursor back while control changes hands.
     motion: Mutex<pin::Tracker>,
@@ -275,6 +283,18 @@ struct Shared {
 }
 
 impl Shared {
+    /// A seized external mouse did something (only while grabbed).
+    fn on_hid(&self, ev: HidEvent) {
+        if !self.grabbed.load(Ordering::SeqCst) {
+            return;
+        }
+        self.emit(match ev {
+            HidEvent::Motion { dx, dy } => CaptureEvent::Motion { pos: lock(&self.pin).0, dx, dy },
+            HidEvent::Button { button, down } => CaptureEvent::Button { button, down },
+            HidEvent::Wheel { dx, dy } => CaptureEvent::Wheel { dx, dy },
+        });
+    }
+
     fn emit(&self, ev: CaptureEvent) {
         // Never block the system input path; drop on overflow.
         if self.tx.try_send(ev).is_err() {
@@ -368,7 +388,13 @@ impl CaptureControl for Control {
             repin(pin);
             motion.warped(from, pin);
             let _ = CGDisplayHideCursor(CGMainDisplayID());
+            if let Some(s) = lock(&self.0.seizer).as_mut() {
+                s.seize();
+            }
         } else {
+            if let Some(s) = lock(&self.0.seizer).as_mut() {
+                s.release();
+            }
             let _ = CGAssociateMouseAndMouseCursorPosition(true);
             let _ = CGDisplayShowCursor(CGMainDisplayID());
         }
@@ -774,6 +800,7 @@ fn start_taps() -> Result<(Arc<Shared>, mpsc::Receiver<CaptureEvent>), InputErro
         run_loop: OnceLock::new(),
         taps: Mutex::new(None),
         pin: Mutex::new((Point::default(), pin::PIN_RADIUS)),
+        seizer: Mutex::new(None),
         motion: Mutex::new(pin::Tracker::default()),
         last_flags: Mutex::new(0),
         gate: crate::gate::KeyGate::default(),
@@ -813,11 +840,21 @@ fn start_taps() -> Result<(Arc<Shared>, mpsc::Receiver<CaptureEvent>), InputErro
                 );
             }
             *lock(&thread_shared.taps) = Some(Taps { hid: tap, session });
+            // Weak: the seizer's callbacks must not keep `Shared` alive.
+            let weak = Arc::downgrade(&thread_shared);
+            let sink = Box::new(move |e| {
+                if let Some(s) = weak.upgrade() {
+                    s.on_hid(e);
+                }
+            });
+            *lock(&thread_shared.seizer) = Some(macos_hid::Seizer::new(rl.clone(), sink));
             let _ = thread_shared.run_loop.set(SendRunLoop(rl));
             let _ = ready_tx.send(Ok(()));
             while !thread_shared.stopped.load(Ordering::SeqCst) {
                 CFRunLoop::run();
             }
+            // Mice back to the system before the run loop they report on goes.
+            drop(lock(&thread_shared.seizer).take());
             // `front_taps` may have replaced them: tear down the current ones.
             if let Some(taps) = lock(&thread_shared.taps).take() {
                 taps.invalidate();
