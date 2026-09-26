@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use glidedesk_config::{Config, RemapPreset};
-use glidedesk_input::Injector;
+use glidedesk_input::{Injector, Pressed};
 use glidedesk_net::{Browser, DiscoveryEvent, FrameReader, FrameWriter, Tuning};
 use glidedesk_proto::{
     ClientPrefs, ClientSettings, ClientStatus, Control, DEFAULT_PORT, DeviceId, Features, GoodbyeReason, Hello, Input,
@@ -77,13 +77,36 @@ enum InjectCmd {
     Leds(LedState),
 }
 
+/// The events that apply `ev` here. A press of a button that is already down
+/// means its release got lost on the way: the OS would drop the press as a
+/// repeat and let only its release through, so the click after that (e.g. on
+/// the next window, once an app closed) did nothing and needed a second try.
+/// The button is released first, so every press is a click.
+fn with_lost_release(held: &mut Pressed, ev: Input) -> [Option<Input>; 2] {
+    match ev {
+        Input::Button { button, down } => {
+            let lost = down && held.buttons().contains(&button);
+            held.button(button, down);
+            if lost {
+                return [Some(Input::Button { button, down: false }), Some(ev)];
+            }
+        }
+        Input::ReleaseAll => *held = Pressed::default(),
+        _ => {}
+    }
+    [Some(ev), None]
+}
+
 fn spawn_injector(mut inj: Box<dyn Injector>) -> std::sync::mpsc::Sender<InjectCmd> {
     let (tx, rx) = std::sync::mpsc::channel::<InjectCmd>();
     let spawned = std::thread::Builder::new().name("gd-inject".into()).spawn(move || {
         let mut errors = 0u32;
+        let mut held = Pressed::default();
         while let Ok(cmd) = rx.recv() {
             let res = match cmd {
-                InjectCmd::Input(ev) => inj.inject(&ev),
+                InjectCmd::Input(ev) => {
+                    with_lost_release(&mut held, ev).into_iter().flatten().try_for_each(|ev| inj.inject(&ev))
+                }
                 InjectCmd::Leds(l) => {
                     inj.set_leds(l);
                     Ok(())
@@ -912,6 +935,22 @@ impl Runner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_press_after_a_lost_release_is_still_a_click() {
+        use glidedesk_proto::MouseButton::{Left, Right};
+        let mut held = Pressed::default();
+        let run = |held: &mut Pressed, ev| with_lost_release(held, ev).into_iter().flatten().collect::<Vec<_>>();
+        let press = |button, down| Input::Button { button, down };
+        assert_eq!(run(&mut held, press(Left, true)), vec![press(Left, true)]);
+        assert_eq!(run(&mut held, press(Right, true)), vec![press(Right, true)]);
+        // Left's release never arrived: the next press releases it first.
+        assert_eq!(run(&mut held, press(Left, true)), vec![press(Left, false), press(Left, true)]);
+        assert_eq!(run(&mut held, press(Left, false)), vec![press(Left, false)]);
+        assert_eq!(run(&mut held, press(Left, true)), vec![press(Left, true)], "a normal click stays as it is");
+        assert_eq!(run(&mut held, Input::ReleaseAll), vec![Input::ReleaseAll]);
+        assert_eq!(run(&mut held, press(Right, true)), vec![press(Right, true)], "released by ReleaseAll");
+    }
 
     #[test]
     fn port_split_handles_names() {

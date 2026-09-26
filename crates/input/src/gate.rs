@@ -1,10 +1,13 @@
 //! Decides, inside the OS input callback, whether a local key event is
 //! swallowed. Keys already held when the grab starts keep working locally
 //! for their release, so nothing gets stuck on the server when control moves
-//! to a client mid-press (e.g. holding Shift while crossing an edge).
+//! to a client mid-press (e.g. holding Shift while crossing an edge). Mouse
+//! buttons likewise: one held down across the switch (a thumb button, a hotkey
+//! switch mid-drag) would otherwise stay down here, and the next click on this
+//! computer only released it — it took a second click.
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 use glidedesk_proto::KeyCode;
@@ -16,6 +19,10 @@ pub(crate) struct KeyGate {
     inner: Mutex<Inner>,
     /// Files were offered to this computer: hold its paste shortcut (§14.2).
     paste_hold: AtomicBool,
+    /// Mouse buttons down now, one bit per OS button number.
+    buttons: AtomicU32,
+    /// Buttons that were down when the grab started: their release stays local.
+    buttons_passthrough: AtomicU32,
 }
 
 impl Default for KeyGate {
@@ -27,6 +34,8 @@ impl Default for KeyGate {
                 paste: PasteGuard::new(glidedesk_proto::Platform::current()),
             }),
             paste_hold: AtomicBool::new(false),
+            buttons: AtomicU32::new(0),
+            buttons_passthrough: AtomicU32::new(0),
         }
     }
 }
@@ -70,6 +79,21 @@ impl KeyGate {
         GateOut { swallow: down || !g.passthrough.remove(&key), paste: false }
     }
 
+    /// Records a mouse button event (`number`: the OS's button number). While
+    /// grabbed, returns `true` for the release of a button held since before the
+    /// grab: it must reach this computer, which got its press.
+    pub(crate) fn on_button(&self, number: u32, down: bool, grabbed: bool) -> bool {
+        let Some(bit) = 1u32.checked_shl(number) else { return false };
+        if down {
+            self.buttons.fetch_or(bit, Ordering::SeqCst);
+            self.buttons_passthrough.fetch_and(!bit, Ordering::SeqCst);
+            return false;
+        }
+        self.buttons.fetch_and(!bit, Ordering::SeqCst);
+        let passthrough = self.buttons_passthrough.fetch_and(!bit, Ordering::SeqCst) & bit != 0;
+        grabbed && passthrough
+    }
+
     /// Key events that perform a paste now (after the files arrived).
     pub(crate) fn replay(&self, key: KeyCode) -> Vec<(KeyCode, bool)> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner).paste.replay(key)
@@ -80,6 +104,7 @@ impl KeyGate {
         let mut g = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let held = g.held.clone();
         g.passthrough = held;
+        self.buttons_passthrough.store(self.buttons.load(Ordering::SeqCst), Ordering::SeqCst);
         // A held paste's key-up now takes the grabbed path: don't wait for it,
         // or that key would stay swallowed for good.
         g.paste.release_held();
@@ -102,5 +127,19 @@ mod tests {
         assert!(sw(g.on_key(a, false, true)));
         assert!(!sw(g.on_key(shift, false, true)), "pre-grab key-up reaches the local OS");
         assert!(sw(g.on_key(shift, true, true)), "pressing it again while grabbed is swallowed");
+    }
+
+    #[test]
+    fn buttons_held_before_grab_release_locally() {
+        let g = KeyGate::default();
+        let (left, back) = (0, 3);
+        assert!(!g.on_button(back, true, false));
+        g.on_grab();
+        assert!(!g.on_button(left, true, true), "new presses go to the client");
+        assert!(!g.on_button(left, false, true));
+        assert!(g.on_button(back, false, true), "pre-grab release reaches the local OS");
+        assert!(!g.on_button(back, true, true), "pressed again while grabbed: the client's");
+        assert!(!g.on_button(back, false, true));
+        assert!(!g.on_button(40, false, true), "button numbers past 31 are never passed");
     }
 }
