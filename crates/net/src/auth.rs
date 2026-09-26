@@ -8,7 +8,7 @@
 //!   *this* QUIC connection. A man in the middle terminates two different TLS
 //!   sessions, so it can't relay a proof. The server proves too (mutual).
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use spake2::{Ed25519Group, Identity, Password, Spake2};
 
@@ -98,14 +98,14 @@ fn unhex<const N: usize>(s: &str) -> Option<[u8; N]> {
 
 fn proof(secret: &[u8], role: &[u8], exporter: &[u8]) -> Result<[u8; PROOF_LEN], AuthError> {
     // HMAC accepts keys of any length, so this never fails in practice.
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(secret).map_err(|_| AuthError::Malformed)?;
+    let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(secret).map_err(|_| AuthError::Malformed)?;
     mac.update(role);
     mac.update(exporter);
     Ok(mac.finalize().into_bytes().into())
 }
 
 fn verify(secret: &[u8], role: &[u8], exporter: &[u8], got: &[u8]) -> bool {
-    let Ok(mut mac) = <Hmac<Sha256> as Mac>::new_from_slice(secret) else { return false };
+    let Ok(mut mac) = <Hmac<Sha256> as KeyInit>::new_from_slice(secret) else { return false };
     mac.update(role);
     mac.update(exporter);
     mac.verify_slice(got).is_ok() // constant time
@@ -284,6 +284,20 @@ mod tests {
     use super::*;
 
     const EXP: &[u8] = b"tls-exporter-of-this-connection";
+
+    /// The stored password key must never change across dependency updates, or
+    /// every saved server password would stop working. Known answer computed with
+    /// argon2 0.5 (Argon2id v0x13, 19 MiB, 2 passes).
+    #[test]
+    fn derived_key_is_stable_across_versions() {
+        let k = derive_key("correct horse battery staple", &[7u8; SALT_LEN]).unwrap();
+        let hex = k.iter().fold(String::new(), |mut s, b| {
+            use std::fmt::Write as _;
+            let _ = write!(s, "{b:02x}");
+            s
+        });
+        assert_eq!(hex, "799f12b9e17710824482d829835acb69f5a9355bf774c4f07342823b11b90928");
+    }
 
     #[test]
     fn right_password_authenticates_both_ways() {
