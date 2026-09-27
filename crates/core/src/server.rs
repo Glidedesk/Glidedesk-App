@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use nexpingdesk_config::{ClientEntry, Config, IpFilter, RemapPreset};
-use nexpingdesk_input::{Capture, CaptureControl, CaptureEvent, Hotkey, Pressed, Remap, hotkey};
+use nexpingdesk_input::{Capture, CaptureControl, CaptureEvent, Hotkey, Pressed, Remap, gesture, hotkey};
 use nexpingdesk_layout::{EdgeContext, Engine, Focus, Layout, LinkSpec, Machine, Outcome, Warning};
 use nexpingdesk_net::{Admission, Advertiser, BindStatus, FrameReader, FrameWriter, Server as NetServer, Tuning};
 use nexpingdesk_proto::{
@@ -666,6 +666,16 @@ impl Hub {
                 }
             }
             CaptureEvent::Key { key, down } => self.on_key(key, down),
+            CaptureEvent::Gesture(g) => {
+                // Already the client's own keys: not remapped like typed ones.
+                if let Some(id) = self.focused() {
+                    let platform = self.slots.get(&id).and_then(|s| s.platform).unwrap_or(self.local_platform);
+                    let keys = gesture::shortcut(g, platform);
+                    for (&k, down) in keys.iter().map(|k| (k, true)).chain(keys.iter().rev().map(|k| (k, false))) {
+                        self.send_input(id, Input::Key { key: KeyCode(k), down });
+                    }
+                }
+            }
             CaptureEvent::PasteRequested { key } => self.paste_offered_files(Some(key)),
             CaptureEvent::DisplaysChanged => self.poll_monitors(),
             CaptureEvent::Interrupted => {

@@ -8,7 +8,7 @@ use std::time::Duration;
 use nexpingdesk_config::{BindMode, Config, Role};
 use nexpingdesk_core::{ClientDeps, HealthState, LinkState, ServerCommand, ServerDeps, client, server};
 use nexpingdesk_input::mock::{self, ControlCall, MockInjector};
-use nexpingdesk_input::{CaptureEvent, InputError};
+use nexpingdesk_input::{CaptureEvent, Gesture, InputError, gesture};
 use nexpingdesk_proto::{DeviceId, GoodbyeReason, Input, KeyCode, MonitorId, MonitorInfo, Point, Rect};
 
 const SERVER_ID: DeviceId = DeviceId([0x11; 16]);
@@ -133,6 +133,16 @@ async fn full_session() {
     cap_tx.send(CaptureEvent::Key { key: KeyCode(0x04), down: true }).await.unwrap();
     wait_injected(&injector, "key down", |e| e.contains(&Input::Key { key: KeyCode(0x04), down: true })).await;
     wait_injected(&injector, "moved", |e| e.iter().any(|i| matches!(i, Input::MouseAbs(p) if p.x == 100))).await;
+
+    // The gesture button: the client's own shortcut for it, pressed then released.
+    cap_tx.send(CaptureEvent::Gesture(Gesture::Left)).await.unwrap();
+    let keys = gesture::shortcut(Gesture::Left, nexpingdesk_proto::Platform::current());
+    let want: Vec<Input> = keys
+        .iter()
+        .map(|&k| Input::Key { key: KeyCode(k), down: true })
+        .chain(keys.iter().rev().map(|&k| Input::Key { key: KeyCode(k), down: false }))
+        .collect();
+    wait_injected(&injector, "gesture shortcut", |e| e.windows(want.len()).any(|w| w == want.as_slice())).await;
 
     // Back across the left edge while 'A' is still held: the client must release it.
     cap_tx.send(CaptureEvent::Motion { pos: Point::new(999, 250), dx: -150, dy: 0 }).await.unwrap();

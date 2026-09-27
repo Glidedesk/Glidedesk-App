@@ -14,6 +14,10 @@
 //! keeps from acting here. Buttons that such software took over for its own
 //! actions report nothing standard, so they do nothing while seized.
 //!
+//! A Logitech mouse's gesture button (and whatever else Logi Options+
+//! diverts) arrives as HID++ reports, decoded by [`crate::gesture`]: it acts on
+//! the other computer, as that computer's own shortcut.
+//!
 //! Needs Input Monitoring. Without it opening fails and those mice keep the
 //! event-tap path.
 
@@ -28,9 +32,20 @@ use nexpingdesk_proto::MouseButton;
 use objc2_core_foundation::{CFRetained, CFRunLoop, CFString, kCFRunLoopCommonModes};
 use tracing::{debug, info, warn};
 
+use crate::gesture::{self, Gesture};
+
 type Ref = *mut c_void;
 type IoReturn = i32;
 type ValueCallback = unsafe extern "C-unwind" fn(context: *mut c_void, result: IoReturn, sender: Ref, value: Ref);
+type ReportCallback = unsafe extern "C-unwind" fn(
+    context: *mut c_void,
+    result: IoReturn,
+    sender: Ref,
+    kind: u32,
+    id: u32,
+    report: *mut u8,
+    len: isize,
+);
 
 const SEIZE: u32 = 1; // kIOHIDOptionsTypeSeizeDevice
 const OPTIONS_NONE: u32 = 0;
@@ -38,6 +53,8 @@ const LISTEN_EVENT: u32 = 1; // kIOHIDRequestTypeListenEvent
 const ACCESS_GRANTED: u32 = 0; // kIOHIDAccessTypeGranted
 const CF_NUMBER_SINT64: isize = 4; // kCFNumberSInt64Type
 const CF_NUMBER_DOUBLE: isize = 13; // kCFNumberDoubleType
+/// Room for the longest input report read (HID++ very long reports are 64 bytes).
+const REPORT_MAX: usize = 64;
 
 const PAGE_GENERIC_DESKTOP: u32 = 0x01;
 const PAGE_BUTTON: u32 = 0x09;
@@ -62,6 +79,13 @@ unsafe extern "C" {
     fn IOHIDDeviceScheduleWithRunLoop(device: Ref, run_loop: *const c_void, mode: *const c_void);
     fn IOHIDDeviceUnscheduleFromRunLoop(device: Ref, run_loop: *const c_void, mode: *const c_void);
     fn IOHIDDeviceRegisterInputValueCallback(device: Ref, callback: Option<ValueCallback>, context: *mut c_void);
+    fn IOHIDDeviceRegisterInputReportCallback(
+        device: Ref,
+        report: *mut u8,
+        len: isize,
+        callback: Option<ReportCallback>,
+        context: *mut c_void,
+    );
     fn IOHIDDeviceGetProperty(device: Ref, key: *const c_void) -> *const c_void;
     fn IOHIDDeviceConformsTo(device: Ref, page: u32, usage: u32) -> u8;
     fn IOHIDValueGetElement(value: Ref) -> Ref;
@@ -116,6 +140,7 @@ pub enum HidEvent {
         dx: i32,
         dy: i32,
     },
+    Gesture(Gesture),
 }
 
 fn as_ptr<T: ?Sized + objc2_core_foundation::Type>(r: &CFRetained<T>) -> *const c_void {
@@ -279,6 +304,14 @@ struct Context {
     sink: Box<dyn Fn(HidEvent) + Send + Sync>,
     /// Acceleration per device (keyed by its address) and this Mac's feel.
     state: Mutex<(Vec<(usize, Accel)>, Feel)>,
+    /// Diverted buttons and the gesture button (callbacks run on one thread).
+    gesture: Mutex<gesture::Tracker>,
+}
+
+impl Context {
+    fn tracker(&self) -> std::sync::MutexGuard<'_, gesture::Tracker> {
+        self.gesture.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 }
 
 unsafe extern "C-unwind" fn on_value(context: *mut c_void, _result: IoReturn, sender: Ref, value: Ref) {
@@ -314,8 +347,52 @@ unsafe extern "C-unwind" fn on_value(context: *mut c_void, _result: IoReturn, se
         let accel = &mut accels[i].1;
         translate(page, usage, v, &mut |c, x| accel.apply(c, x, now), feel.natural_scrolling)
     };
+    let event = match event {
+        // While the gesture button is held the motion is the gesture's, not the pointer's.
+        Some(HidEvent::Motion { dx, dy }) => {
+            let mut tracker = ctx.tracker();
+            if tracker.holding() { tracker.motion(dx, dy).map(HidEvent::Gesture) } else { event }
+        }
+        e => e,
+    };
     if let Some(e) = event {
         (ctx.sink)(e);
+    }
+}
+
+unsafe extern "C-unwind" fn on_report(
+    context: *mut c_void,
+    _result: IoReturn,
+    _sender: Ref,
+    _kind: u32,
+    id: u32,
+    report: *mut u8,
+    len: isize,
+) {
+    let len = usize::try_from(len).unwrap_or(0).min(REPORT_MAX);
+    if context.is_null() || report.is_null() || len == 0 {
+        return;
+    }
+    // SAFETY: as in `on_value`.
+    let ctx = unsafe { &*context.cast::<Context>() };
+    // SAFETY: the device filled `len` bytes of the buffer registered with it.
+    let bytes = unsafe { std::slice::from_raw_parts(report, len) };
+    // The buffer starts with the report id; put it in front if it doesn't.
+    let mut whole = [0u8; REPORT_MAX + 1];
+    let bytes = match u8::try_from(id) {
+        Ok(id) if id != 0 && bytes[0] != id => {
+            whole[0] = id;
+            whole[1..=len].copy_from_slice(bytes);
+            &whole[..=len]
+        }
+        _ => bytes,
+    };
+    let actions = ctx.tracker().report(bytes);
+    for a in actions {
+        (ctx.sink)(match a {
+            gesture::Action::Button { button, down } => HidEvent::Button { button, down },
+            gesture::Action::Gesture(g) => HidEvent::Gesture(g),
+        });
     }
 }
 
@@ -330,10 +407,12 @@ fn dpi(device: Ref) -> f64 {
 }
 
 struct Device {
-    device: Ref,
-    /// Its values are read (a mouse), or it is only kept from others (a vendor
-    /// interface of the same hardware, e.g. the one a receiver's software uses).
+    handle: Ref,
+    /// Its values are read (a mouse), or only its reports (a vendor interface
+    /// of the same hardware, e.g. the one a receiver's software uses: HID++).
     reads: bool,
+    /// Where the device puts each input report.
+    buffer: Box<[u8; REPORT_MAX]>,
 }
 
 /// Seizes and releases the external mice.
@@ -341,10 +420,10 @@ pub struct Seizer {
     context: *mut Context,
     run_loop: CFRetained<CFRunLoop>,
     seized: Vec<Device>,
-    /// Closed devices, still referenced: `release` runs on another thread than
-    /// the callbacks, and one already running may still use its device.
-    /// Let go of at the next `seize` (or on drop).
-    closed: Vec<Ref>,
+    /// Closed devices (and their report buffers), still referenced: `release`
+    /// runs on another thread than the callbacks, and one already running may
+    /// still use them. Let go of at the next `seize` (or on drop).
+    closed: Vec<(Ref, Box<[u8; REPORT_MAX]>)>,
     warned: bool,
 }
 
@@ -361,7 +440,11 @@ impl std::fmt::Debug for Seizer {
 impl Seizer {
     /// Callbacks run on `run_loop` (the capture thread's) and go to `sink`.
     pub fn new(run_loop: CFRetained<CFRunLoop>, sink: Box<dyn Fn(HidEvent) + Send + Sync>) -> Self {
-        let context = Box::into_raw(Box::new(Context { sink, state: Mutex::new((Vec::new(), Feel::current())) }));
+        let context = Box::into_raw(Box::new(Context {
+            sink,
+            state: Mutex::new((Vec::new(), Feel::current())),
+            gesture: Mutex::new(gesture::Tracker::default()),
+        }));
         Self { context, run_loop, seized: Vec::new(), closed: Vec::new(), warned: false }
     }
 
@@ -390,6 +473,7 @@ impl Seizer {
             // SAFETY: the context lives as long as `self`.
             let ctx = unsafe { &*self.context };
             *ctx.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = (Vec::new(), Feel::current());
+            *ctx.tracker() = gesture::Tracker::default();
         }
         let run_loop = as_ptr(&self.run_loop);
         for (device, reads) in external_devices() {
@@ -401,14 +485,23 @@ impl Seizer {
                 unsafe { CFRelease(device.cast_const()) };
                 continue;
             }
-            if reads {
-                // SAFETY: an open device; the context outlives the registration.
-                unsafe {
+            let mut buffer = Box::new([0u8; REPORT_MAX]);
+            // SAFETY: an open device; the context and the buffer outlive the
+            // registration (both are kept until a whole grab after `release`).
+            unsafe {
+                if reads {
                     IOHIDDeviceRegisterInputValueCallback(device, Some(on_value), self.context.cast());
-                    IOHIDDeviceScheduleWithRunLoop(device, run_loop, Self::mode());
                 }
+                IOHIDDeviceRegisterInputReportCallback(
+                    device,
+                    buffer.as_mut_ptr(),
+                    isize::try_from(REPORT_MAX).unwrap_or(0),
+                    Some(on_report),
+                    self.context.cast(),
+                );
+                IOHIDDeviceScheduleWithRunLoop(device, run_loop, Self::mode());
             }
-            self.seized.push(Device { device, reads });
+            self.seized.push(Device { handle: device, reads, buffer });
         }
         self.run_loop.wake_up();
         let mice = self.seized.iter().filter(|d| d.reads).count();
@@ -421,23 +514,31 @@ impl Seizer {
     pub fn release(&mut self) {
         let run_loop = as_ptr(&self.run_loop);
         for d in self.seized.drain(..) {
+            let mut buffer = d.buffer;
             // SAFETY: devices opened in `seize`, unregistered before they go.
             unsafe {
                 if d.reads {
-                    IOHIDDeviceRegisterInputValueCallback(d.device, None, std::ptr::null_mut());
-                    IOHIDDeviceUnscheduleFromRunLoop(d.device, run_loop, Self::mode());
+                    IOHIDDeviceRegisterInputValueCallback(d.handle, None, std::ptr::null_mut());
                 }
+                IOHIDDeviceRegisterInputReportCallback(
+                    d.handle,
+                    buffer.as_mut_ptr(),
+                    isize::try_from(REPORT_MAX).unwrap_or(0),
+                    None,
+                    std::ptr::null_mut(),
+                );
+                IOHIDDeviceUnscheduleFromRunLoop(d.handle, run_loop, Self::mode());
                 // With the options it was opened with, so the seize ends.
-                let _ = IOHIDDeviceClose(d.device, SEIZE);
+                let _ = IOHIDDeviceClose(d.handle, SEIZE);
             }
-            self.closed.push(d.device);
+            self.closed.push((d.handle, buffer));
         }
     }
 
     fn forget_closed(&mut self) {
-        for d in self.closed.drain(..) {
+        for (d, _buffer) in self.closed.drain(..) {
             // SAFETY: the reference kept by `release`; no callback can be using
-            // it any more (it was unscheduled a whole grab ago).
+            // it or its buffer any more (it was unscheduled a whole grab ago).
             unsafe { CFRelease(d.cast_const()) };
         }
     }
