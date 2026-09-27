@@ -41,3 +41,92 @@ desktop.ini
 /fuzz/target/
 /fuzz/corpus/
 /fuzz/artifacts/
+
+# ==========================================
+# AI / assistant tooling (Claude, graphify, agents, IDE copilots)
+# ==========================================
+.claude/
+.claude-*/
+CLAUDE.md
+CLAUDE.local.md
+.claudeignore
+graphify-out/
+.graphify/
+AGENTS.md
+AGENT.md
+GEMINI.md
+.gemini/
+.codex/
+.openai/
+.cursor/
+.cursorrules
+.cursorignore
+.windsurf/
+.windsurfrules
+.aider*
+.continue/
+.codeium/
+.tabnine/
+.copilot/
+.github/copilot-instructions.md
+.clinerules
+.cline/
+.roo/
+.roomodes
+.kiro/
+.junie/
+.serena/
+.specstory/
+.mimocode/
+.opencode/
+.agents/
+.mcp.json
+mcp.json
+*.session-data
+plan.md
+PROMPT.md
+PROPMT.md
+
+# ==========================================
+# OS / editor cache
+# ==========================================
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.directory
+.Trash-*
+.nfs*
+.fuse_hidden*
+*.swo
+.idea/
+.vscode/
+.cache/
+
+# ==========================================
+# Sensitive: secrets, keys, credentials, dumps
+# ==========================================
+!.env.example
+*.jks
+*.keystore
+*.kdbx
+id_rsa*
+id_ed25519*
+.ssh/
+.netrc
+.npmrc
+.pypirc
+auth.json
+credentials.json
+service-account*.json
+*secret*.json
+*.tfstate
+*.tfstate.*
+*.sqlite
+*.sqlite3
+*.bak
+*.dump
