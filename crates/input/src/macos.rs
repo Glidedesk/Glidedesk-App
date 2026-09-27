@@ -388,15 +388,22 @@ impl CaptureControl for Control {
             repin(pin);
             motion.warped(from, pin);
             let _ = CGDisplayHideCursor(CGMainDisplayID());
+            // Mice are seized and released without `motion` held: opening and
+            // closing a Bluetooth mouse is slow, and the HID tap needs that lock
+            // for every move. Blocked right while the hand crossed the edge, it
+            // timed out, macOS switched it off, and the Mac got every event: its
+            // cursor moved along and extra buttons acted here too.
+            drop(motion);
             if let Some(s) = lock(&self.0.seizer).as_mut() {
                 s.seize();
             }
         } else {
+            let _ = CGAssociateMouseAndMouseCursorPosition(true);
+            let _ = CGDisplayShowCursor(CGMainDisplayID());
+            drop(motion);
             if let Some(s) = lock(&self.0.seizer).as_mut() {
                 s.release();
             }
-            let _ = CGAssociateMouseAndMouseCursorPosition(true);
-            let _ = CGDisplayShowCursor(CGMainDisplayID());
         }
     }
 
@@ -635,8 +642,13 @@ unsafe extern "C-unwind" fn session_callback(
 /// both taps on every report made macOS report again, forever: the capture
 /// thread spent most of its time switching taps (a core busy, the Mac hot), and
 /// every round told the client to release everything.
+///
+/// A timeout report is proof enough that the tap is off: it is always switched
+/// back on (a no-op if it already is, so it can't loop). Trusting
+/// `CGEventTapIsEnabled` there left the HID tap off while a client had control.
 fn tap_disabled(shared: &Shared, ty: CGEventType, session: bool) -> bool {
-    if ty != CGEventType::TapDisabledByTimeout && ty != CGEventType::TapDisabledByUserInput {
+    let timeout = ty == CGEventType::TapDisabledByTimeout;
+    if !timeout && ty != CGEventType::TapDisabledByUserInput {
         return false;
     }
     let wanted = !shared.stopped.load(Ordering::SeqCst) && (!session || shared.grabbed.load(Ordering::SeqCst));
@@ -646,7 +658,7 @@ fn tap_disabled(shared: &Shared, ty: CGEventType, session: bool) -> bool {
     let reenabled = lock(&shared.taps).as_ref().is_some_and(|taps| {
         let tap = if session { taps.session.as_ref() } else { Some(&taps.hid) };
         tap.is_some_and(|t| {
-            let off = !CGEvent::tap_is_enabled(t);
+            let off = timeout || !CGEvent::tap_is_enabled(t);
             if off {
                 CGEvent::tap_enable(t, true);
             }
