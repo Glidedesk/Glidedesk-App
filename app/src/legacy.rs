@@ -31,7 +31,7 @@ fn retire_old_bundle() {
         if exe.is_file() {
             let _ = Command::new(&exe).arg("--shutdown").status();
         }
-        match nexpingdesk_platform::trash(&app) {
+        match nexpingdesk_platform::move_to_trash(&app) {
             Ok(()) => tracing::info!(app = %app.display(), "moved the app's former version to the Trash"),
             Err(e) => tracing::warn!(app = %app.display(), error = %e, "could not remove the app's former version"),
         }
