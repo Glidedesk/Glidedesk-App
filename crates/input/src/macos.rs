@@ -1473,6 +1473,8 @@ mod tests {
         std::thread::sleep(Duration::from_millis(300));
         let hidden_again = !cursor_visible();
         cap.control.set_grab(false);
+        // The window server carries out a show asynchronously, like a hide.
+        std::thread::sleep(Duration::from_millis(300));
         let shown_after = cursor_visible();
         cap.control.stop();
         if !hidden_at_grab {
