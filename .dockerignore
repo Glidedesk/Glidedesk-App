@@ -1,2 +1,101 @@
 *
 !docker/bin/
+
+# ==========================================
+# AI / assistant tooling (Claude, graphify, agents, IDE copilots)
+# ==========================================
+.claude/
+.claude-*/
+CLAUDE.md
+CLAUDE.local.md
+.claudeignore
+graphify-out/
+.graphify/
+AGENTS.md
+AGENT.md
+GEMINI.md
+.gemini/
+.codex/
+.openai/
+.cursor/
+.cursorrules
+.cursorignore
+.windsurf/
+.windsurfrules
+.aider*
+.continue/
+.codeium/
+.tabnine/
+.copilot/
+.github/copilot-instructions.md
+.clinerules
+.cline/
+.roo/
+.roomodes
+.kiro/
+.junie/
+.serena/
+.specstory/
+.mimocode/
+.opencode/
+.agents/
+.mcp.json
+mcp.json
+*.session-data
+plan.md
+PROMPT.md
+PROPMT.md
+
+# ==========================================
+# OS / editor cache
+# ==========================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+desktop.ini
+$RECYCLE.BIN/
+*~
+.directory
+.Trash-*
+.nfs*
+.fuse_hidden*
+*.swp
+*.swo
+.idea/
+.vscode/
+.cache/
+
+# ==========================================
+# Sensitive: secrets, keys, credentials, dumps
+# ==========================================
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.kdbx
+id_rsa*
+id_ed25519*
+.ssh/
+.netrc
+.npmrc
+.pypirc
+auth.json
+credentials.json
+service-account*.json
+*secret*.json
+*.tfstate
+*.tfstate.*
+*.sqlite
+*.sqlite3
+*.bak
+*.dump
