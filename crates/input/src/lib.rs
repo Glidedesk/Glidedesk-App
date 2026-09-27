@@ -7,6 +7,7 @@
 
 #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 mod gate;
+pub mod gesture;
 pub mod hotkey;
 pub mod keymap;
 pub mod mock;
@@ -31,6 +32,7 @@ use std::sync::Arc;
 use nexpingdesk_proto::{Input, KeyCode, LedState, MonitorInfo, MouseButton, Point};
 use tokio::sync::mpsc;
 
+pub use gesture::Gesture;
 pub use hotkey::{Hotkey, HotkeyError};
 pub use modifiers::Pressed;
 pub use remap::Remap;
@@ -61,6 +63,9 @@ pub enum CaptureEvent {
         key: KeyCode,
         down: bool,
     },
+    /// A mouse's gesture button (see [`gesture`]): sent to the computer that
+    /// has control as its own shortcut for it.
+    Gesture(Gesture),
     /// Monitor layout or resolution changed.
     DisplaysChanged,
     /// The OS stopped delivering events for a moment (macOS tap timeout) and

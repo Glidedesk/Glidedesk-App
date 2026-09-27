@@ -24,8 +24,10 @@ pub mod media {
 
 pub mod hid {
     pub const A: u16 = 0x04;
+    pub const D: u16 = 0x07;
     pub const ENTER: u16 = 0x28;
     pub const ESCAPE: u16 = 0x29;
+    pub const TAB: u16 = 0x2B;
     pub const CAPS_LOCK: u16 = 0x39;
     pub const F1: u16 = 0x3A;
     pub const PRINT_SCREEN: u16 = 0x46;
